@@ -1,4 +1,4 @@
-# PacketReplayer-UDP-TCP-
+# PacketReplayer-UDP-TCP
 A multi-threaded C++/Qt6 desktop application using PcapPlusPlus and CMake to parse, filter, and replay PCAP/PCAPNG network packet captures over TCP/UDP sockets. Features asynchronous background parsing via QThread architectures and dynamic BPF packet streaming rules without blocking main UI thread performance.
 
 # Multi-Threaded Network Packet Analyzer & Replay Engine
@@ -45,6 +45,7 @@ Open your command prompt (`cmd`) and execute the following batch instructions se
 
 ```cmd
 :: A. Bind Qt's CMake tool and MinGW 13.1.0 64-bit compiler to your terminal path environment
+check where your Qt is installed
 set PATH=C:\Qt\Tools\CMake_64\bin;%PATH%
 set PATH=C:\Qt\Tools\mingw1310_64\bin;%PATH%
 
@@ -52,7 +53,7 @@ set PATH=C:\Qt\Tools\mingw1310_64\bin;%PATH%
 cmake --version
 
 :: C. Move directly into your extracted source framework folder and initialize a build target
-cd C:\pcap\PcapPlusPlus-26.07
+cd [your-project-path]\pcap\PcapPlusPlus-26.07
 mkdir build
 cd build
 
