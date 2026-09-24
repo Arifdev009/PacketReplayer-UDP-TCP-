@@ -22,3 +22,40 @@ A high-performance C++/Qt6 desktop application leveraging the **PcapPlusPlus API
 * **Libraries:** PcapPlusPlus API (Core capture-parsing utilities)
 * **Build System:** Modern CMake (3.16+)
 
+
+---
+
+## ⚙️ Compilation & Environment Setup
+
+This application requires the **Npcap Driver** to be installed on the host machine and depends on **PcapPlusPlus** compiled explicitly with the matching Qt MinGW compiler environment.
+
+### 1. Prerequisites & Folder Structure
+1. Download and install the [Npcap Driver](https://npcap.com).
+2. Create a folder named `pcap` inside your main project root directory.
+3. Download and extract the **Npcap SDK** and **PcapPlusPlus source files** into that directory matching this exact structure:
+   ```text
+   your-project/
+   └── pcap/
+       ├── npcap/              <-- Npcap SDK files
+       └── PcapPlusPlus-26.07/ <-- Extracted PcapPlusPlus source framework
+   ```
+
+### 2. Building PcapPlusPlus with Qt's CMake & MinGW
+Open your command prompt (`cmd`) and execute the following batch instructions sequentially to construct your dependency binaries:
+
+```cmd
+:: A. Bind Qt's CMake tool and MinGW 13.1.0 64-bit compiler to your terminal path environment
+set PATH=C:\Qt\Tools\CMake_64\bin;%PATH%
+set PATH=C:\Qt\Tools\mingw1310_64\bin;%PATH%
+
+:: B. Verify binary visibility states match
+cmake --version
+
+:: C. Move directly into your extracted source framework folder and initialize a build target
+cd C:\pcap\PcapPlusPlus-26.07
+mkdir build
+cd build
+
+:: D. Generate the MinGW Makefiles pointing to the local Npcap installation paths
+cmake -G "MinGW Makefiles" -DPCAPPLUSPLUS_BUILD_TESTS=OFF -DPCAP_ROOT="C:/pcap/npcap" -DCMAKE_CXX_FLAGS="-D_In_= -D_Post_invalid_=" ..
+
