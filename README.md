@@ -58,5 +58,5 @@ mkdir build
 cd build
 
 :: D. Generate the MinGW Makefiles pointing to the local Npcap installation paths
-cmake -G "MinGW Makefiles" -DPCAPPLUSPLUS_BUILD_TESTS=OFF -DPCAP_ROOT="C:/pcap/npcap" -DCMAKE_CXX_FLAGS="-D_In_= -D_Post_invalid_=" ..
+cmake -G "MinGW Makefiles" -DPCAPPLUSPLUS_BUILD_TESTS=OFF [your-project-path]/pcap/npcap -DCMAKE_CXX_FLAGS="-D_In_= -D_Post_invalid_=" ..
 
