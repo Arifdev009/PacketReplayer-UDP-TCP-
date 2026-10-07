@@ -1,6 +1,5 @@
 #include "pcapfileparser.h"
 #include <qdebug.h>
-
 PcapFileParser::PcapFileParser(QObject *parent): QObject(parent)
 {
 
@@ -117,7 +116,93 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                 mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
             }
         }
+        else
+        {
+            bool isTcp = false;
+            bool isUdp = false;
+            if (parsedPacket.isPacketOfType(pcpp::IPv4))
+            {
+                // FALLBACK: Check the raw IP header protocol field
+                pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+                if (ipLayer != nullptr)
+                {
+                    if (ipLayer->getIPv4Header()->protocol == 6) {
+                        isTcp = true;
+                    } else if (ipLayer->getIPv4Header()->protocol == 17) {
+                        isUdp = true;
+                    }
+                }
+
+
+                if (isTcp)
+                {
+                    hasTcpPackets = true;
+
+                    // // pcpp::TcpLayer* tcpLayer = parsedPacket.getLayerOfType<pcpp::TcpLayer>();
+                    // srcPort = QString::number(ipLa->getSrcPort());
+                    // dstPort = QString::number(tcpLayer->getDstPort());
+                    // hasPort = true;
+
+                    // Extract IPv4 addresses
+                    if (parsedPacket.isPacketOfType(pcpp::IPv4))
+                    {
+                        // pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+                        srcIP = QString::fromStdString(ipLayer->getSrcIPv4Address().toString());
+                        dstIP = QString::fromStdString(ipLayer->getDstIPv4Address().toString());
+                        hasIP = true;
+                    }
+                    // Extract IPv6 addresses
+                    else if (parsedPacket.isPacketOfType(pcpp::IPv6))
+                    {
+                        pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+                        srcIP = QString::fromStdString(ipLayer->getSrcIPv6Address().toString());
+                        dstIP = QString::fromStdString(ipLayer->getDstIPv6Address().toString());
+                        hasIP = true;
+                    }
+                    if (hasIP || hasPort)
+                    {
+                        mapTcpIptoIP[srcIP].insert(dstIP);
+                        mapTcpPorttoPort[srcPort].insert(dstPort);
+                        mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                    }
+                }
+                else if (isUdp)
+                {
+                    hasUdpPackets = true;
+                    // pcpp::iphdr* ipHeader = ipLayer->getIPv4Header();
+                    // srcPort = QString::number(ipHeader->ipId);
+                    // dstPort = QString::number(udpLayer->getDstPort());
+                    // hasPort = true;
+                    // Extract IPv4 addresses
+                    uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
+                    if (parsedPacket.isPacketOfType(pcpp::IPv4))
+                    {
+                        // pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+                        srcIP = QString::fromStdString(ipLayer->getSrcIPv4Address().toString());
+                        dstIP = QString::fromStdString(ipLayer->getDstIPv4Address().toString());
+                        hasIP = true;
+                    }
+                    // Extract IPv6 addresses
+                    else if (parsedPacket.isPacketOfType(pcpp::IPv6))
+                    {
+                        pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+                        srcIP = QString::fromStdString(ipLayer->getSrcIPv6Address().toString());
+                        dstIP = QString::fromStdString(ipLayer->getDstIPv6Address().toString());
+                        hasIP = true;
+                    }
+                    if (hasIP || hasPort)
+                    {
+                        mapUdpIptoIP[srcIP].insert(dstIP);
+                        mapUdpPorttoPort[srcPort].insert(dstPort);
+                        mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                    }
+                }
+            }
+        }
     }
+
 
     emit udportcpExists(hasUdpPackets,hasTcpPackets);
     if(hasUdpPackets)
@@ -153,7 +238,7 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
             qDebug() << "  -> Protocol:" << protocol;
         }
     }
-qDebug() << "DONE";
+    qDebug() << "DONE";
     // Loop through every IP and its set of protocols
     for (const auto [ipAddress, protocolSet] : mapTcpIpcomboSrcPort.asKeyValueRange()) {
         qDebug() << "IP Address:" << ipAddress;

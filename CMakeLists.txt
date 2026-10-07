@@ -13,11 +13,18 @@ qt_add_executable(PacketReplayer
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
-    pcapfileparser.h pcapfileparser.cpp
-    tcpclient.h tcpclient.cpp
-    pcapfileFilter.h pcapfileFilter.cpp
-    packetplayer.h packetplayer.cpp
-    udpsender.h udpsender.cpp
+    pcapfileparser.h
+    pcapfileparser.cpp
+    tcpclient.h
+    tcpclient.cpp
+    pcapfileFilter.h
+    pcapfileFilter.cpp
+    packetplayer.h
+    packetplayer.cpp
+    udpsender.h
+    udpsender.cpp
+    tcpserver.h
+    tcpserver.cpp
 )
 
 # 1. Update the header inclusion paths

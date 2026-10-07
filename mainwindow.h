@@ -57,6 +57,8 @@ private slots:
 
     void tcpConnectionStatus(bool tcpStatus);
 
+    void tcpServerConnectionStatus(bool tcpStatus);
+
     void on_timerSpeedSpinBox_valueChanged(int arg1);
 
     void on_timerSpeedSpinBox_textChanged(const QString &arg1);
@@ -108,5 +110,7 @@ private:
 signals:
     void startorstopthePlayer(bool startorstop);
     void pauseorresumethePlayer(bool pauseorresume);
+
+    void startParsing(QString filepath);
 };
 #endif // MAINWINDOW_H

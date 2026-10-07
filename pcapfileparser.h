@@ -26,6 +26,8 @@ class PcapFileParser : public QObject
 public:
     PcapFileParser(QObject *parent = nullptr);
     void processFilePath(QString pcapFilePath);
+
+
 signals:
     void udportcpExists(bool udpExists,bool TcpExists);
     void udpList(QMap<QString, QSet<QString>>  mapUdpIptoIP,QMap<QString, QSet<QString>>  mapUdpPorttoPort,QMap<QString, QSet<QString>>  mapUdpIpcomboSrcPort,QMap<QString, QSet<QString>>  mapUdpIpSrcPortComboDstCombo);

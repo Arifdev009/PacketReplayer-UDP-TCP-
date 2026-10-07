@@ -30,14 +30,17 @@ MainWindow::MainWindow(QWidget *parent)
     ui->dstPortlineEdit->setValidator(validator);
 
     ui->playUDPorTCPComboBox->addItem("UDP");
-    ui->playUDPorTCPComboBox->addItem("TCP");
+    ui->playUDPorTCPComboBox->addItem("TCP CLIENT");
+    ui->playUDPorTCPComboBox->addItem("TCP SERVER");
 
     packetplayer = new packetPlayer;
     packetplayerThread = new QThread(this);
     packetplayer->moveToThread(packetplayerThread);
+    packetplayer->initializeClassMembers();
     packetplayerThread->start();
 
     connect(packetplayer,&packetPlayer::tcpConnectionStatus,this,&MainWindow::tcpConnectionStatus);
+    connect(packetplayer,&packetPlayer::tcpServerConnectionStatus,this,&MainWindow::tcpServerConnectionStatus);
     connect(packetplayer,&packetPlayer::packetsEnded,this,&MainWindow::on_playPushButton_clicked);
     connect(packetplayer,&packetPlayer::packetPercentageSent,this,
             [=](int percent)
@@ -45,10 +48,17 @@ MainWindow::MainWindow(QWidget *parent)
                 ui->playerProgressBar->setValue(percent);
             });
 
+    pcapFileParserThread = new QThread();
     pcapfileparser = new PcapFileParser;
-    pcapFileParserThread = new QThread(this);
+
     pcapfileparser->moveToThread(pcapFileParserThread);
     pcapFileParserThread->start();
+
+    // In your UI Controller / MainWindow
+    connect(this, &MainWindow::startParsing, pcapfileparser, &PcapFileParser::processFilePath);
+    // This safely pushes the execution to the background thread
+
+    // qDebug()<<"main thread"<<
     ui->udporTcpComboBox->setPlaceholderText("select UDP or TCP");
 
 
@@ -219,14 +229,16 @@ void MainWindow::on_browsePushButton_clicked()
             pcapFilePath = fileName;
             ui->bowseLineEdit->clear();
             ui->bowseLineEdit->setText(fileName);
-            pcapfileparser->processFilePath(pcapFilePath);
+            emit startParsing(pcapFilePath);
+            // pcapfileparser->processFilePath(pcapFilePath);
         }
         else if(pcapFilePath != fileName)
         {
             pcapFilePath = fileName;
             ui->bowseLineEdit->clear();
             ui->bowseLineEdit->setText(fileName);
-            pcapfileparser->processFilePath(pcapFilePath);
+            emit startParsing(pcapFilePath);
+            // pcapfileparser->processFilePath(pcapFilePath);
         }
     }
 }
@@ -262,11 +274,11 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         ui->srcPortListWidget->clear();
         ui->dstPortListWidget->clear();
 
-        if(ui->udporTcpComboBox->currentIndex() == 0)
+        if(ui->udporTcpComboBox->currentText() == "UDP")
         {
             ui->srcPortListWidget->addItems(udpPortList);
         }
-        else if(ui->udporTcpComboBox->currentIndex() == 1)
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
             ui->srcPortListWidget->addItems(TcpPortList);
         }
@@ -300,11 +312,11 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         {
             qDebug()<<"tcp empty";
         }
-        if(ui->udporTcpComboBox->currentIndex() == 0)
+        if(ui->udporTcpComboBox->currentText() == "UDP")
         {
             ui->srcIpListWidget->addItems(UdpIpList);
         }
-        else if(ui->udporTcpComboBox->currentIndex() == 1)
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
             ui->srcIpListWidget->addItems(TcpIpList);
         }
@@ -328,11 +340,11 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         ui->srcPortListWidget->clear();
         ui->dstPortListWidget->clear();
 
-        if(ui->udporTcpComboBox->currentIndex() == 0)
+        if(ui->udporTcpComboBox->currentText() == "UDP")
         {
             ui->srcIpListWidget->addItems(UdpIpList);
         }
-        else if(ui->udporTcpComboBox->currentIndex() == 1)
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
             ui->srcIpListWidget->addItems(TcpIpList);
         }
@@ -624,6 +636,19 @@ void MainWindow::on_playUDPorTCPComboBox_currentIndexChanged(int index)
             ui->playUDPorTCPComboBox->setCurrentIndex(-1);
         }
     }
+    else if(index == 2)
+    {
+        if(!(ui->srcPortLineEdit->text().isEmpty()))
+        {
+            ui->connectTCPPushButton->setEnabled(true);
+        }
+        else
+        {
+            QMessageBox::information(this, "Warning", "Set src port.");
+            ui->connectTCPPushButton->setEnabled(false);
+            ui->playUDPorTCPComboBox->setCurrentIndex(-1);
+        }
+    }
 
 }
 
@@ -721,7 +746,17 @@ void MainWindow::on_connectTCPPushButton_clicked()
         if(connected == true)
         {
             qDebug()<<"udp connected";
-            bool packetfileempty = packetplayer->filterPcapFile(ui->udporTcpComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+            bool packetfileempty = false;
+            if(ui->udporTcpComboBox->currentText() == "UDP")
+            {
+                packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+            }
+            else if(ui->udporTcpComboBox->currentText() == "TCP")
+            {
+                packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+            }
             if(packetfileempty == true)
             {
                 ui->playerHorizontalSlider->setEnabled(true);
@@ -742,14 +777,68 @@ void MainWindow::on_connectTCPPushButton_clicked()
         }
 
     }
+    else if(ui->playUDPorTCPComboBox->currentIndex() == 2)
+    {
+        if(ui->userIPComboBox->currentIndex()>=0)
+        {
+            srcIpAddress.clear();
+            srcIpAddress.setAddress(ui->userIPComboBox->currentText());
+        }
+        else
+        {
+            srcIpAddress.clear();
+        }
+
+        if(!ui->DstIPLineEdit->text().isEmpty())
+        {
+            dstIpAddress.clear();
+            dstIpAddress.setAddress(ui->DstIPLineEdit->text());
+        }
+        else
+        {
+            dstIpAddress.clear();
+        }
+
+        if(!ui->srcPortLineEdit->text().isEmpty())
+        {
+            srcPort.clear();
+            srcPort = ui->srcPortLineEdit->text();
+        }
+        else
+        {
+            srcPort.clear();
+        }
+
+        if(!ui->dstPortlineEdit->text().isEmpty())
+        {
+            dstPort.clear();
+            dstPort = ui->dstPortlineEdit->text();
+        }
+        else
+        {
+            dstPort.clear();
+        }
+
+        bool connected = packetplayer->startTcpServer(srcIpAddress,dstIpAddress,srcPort,dstPort);
+    }
     ui->connectTCPPushButton->setEnabled(true);
 }
 
 void MainWindow::tcpConnectionStatus(bool tcpStatus)
 {
-    if(tcpStatus == true && ui->udporTcpComboBox->currentIndex() == 1)
+    if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
     {
-        bool packetfileempty = packetplayer->filterPcapFile(ui->udporTcpComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+        bool packetfileempty = false;
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+        }
         if(packetfileempty == true)
         {
             ui->playerHorizontalSlider->setEnabled(true);
@@ -767,7 +856,49 @@ void MainWindow::tcpConnectionStatus(bool tcpStatus)
             ui->timerSpeedSpinBox->setEnabled(false);
         }
     }
-    else if(tcpStatus == false && ui->udporTcpComboBox->currentIndex() == 1)
+    else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
+    {
+        ui->playerHorizontalSlider->setEnabled(false);
+        ui->playerProgressBar->setEnabled(false);
+        ui->playPushButton->setEnabled(false);
+        ui->pausePushButton->setEnabled(false);
+        ui->timerSpeedSpinBox->setEnabled(false);
+    }
+}
+
+void MainWindow::tcpServerConnectionStatus(bool tcpStatus)
+{
+    if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
+    {
+        bool packetfileempty = false;
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+
+        }
+        if(packetfileempty == true)
+        {
+            ui->playerHorizontalSlider->setEnabled(true);
+            ui->playerProgressBar->setEnabled(true);
+            ui->playPushButton->setEnabled(true);
+            ui->pausePushButton->setEnabled(true);
+            ui->timerSpeedSpinBox->setEnabled(true);
+        }
+        else
+        {
+            ui->playerHorizontalSlider->setEnabled(false);
+            ui->playerProgressBar->setEnabled(false);
+            ui->playPushButton->setEnabled(false);
+            ui->pausePushButton->setEnabled(false);
+            ui->timerSpeedSpinBox->setEnabled(false);
+        }
+    }
+    else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
     {
         ui->playerHorizontalSlider->setEnabled(false);
         ui->playerProgressBar->setEnabled(false);

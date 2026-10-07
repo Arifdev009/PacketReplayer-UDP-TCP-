@@ -7,6 +7,7 @@
 #include "pcapfileFilter.h"
 #include "tcpclient.h"
 #include "udpsender.h"
+#include "tcpserver.h"
 
 
 class packetPlayer: public QObject
@@ -14,14 +15,17 @@ class packetPlayer: public QObject
     Q_OBJECT
 public:
     packetPlayer(QObject *parent = nullptr);
+    void initializeClassMembers();
     TcpClient *tcpclient;
+    TcpServer *tcpserver;
     UdpSender *udpsender;
     bool connectTcp(QHostAddress dstIpAddress,QHostAddress srcIpAddress,QString srcPort,QString dstPort);
+    bool startTcpServer(QHostAddress dstIpAddress,QHostAddress srcIpAddress,QString srcPort,QString dstPort);
     bool connectUdp(QHostAddress dstIpAddress,QHostAddress srcIpAddress,QString srcPort,QString dstPort);
-    bool filterPcapFile(bool udportcp,QString pcapFilePath,QString dstIpAddress,QString srcIpAddress,QString srcPort,QString dstPort);
+    bool filterPcapFile(bool udportcp,unsigned int sendingudportcp,QString pcapFilePath,QString dstIpAddress,QString srcIpAddress,QString srcPort,QString dstPort);
 
     QVector<QByteArray> packetStorage;
-    bool sendudportcp = 0;
+    unsigned int sendudportcp = 0;
     QTimer *sendTimer;
     unsigned int packetIniIndex = 0;
     unsigned int packetFinalIndex = 0;
@@ -34,6 +38,7 @@ public:
 
 signals:
     void tcpConnectionStatus(bool status);
+    void tcpServerConnectionStatus(bool status);
     void packetsEnded(bool packetsend);
     void packetPercentageSent(unsigned int percent);
 public slots:

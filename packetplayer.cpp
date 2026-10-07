@@ -2,15 +2,24 @@
 
 packetPlayer::packetPlayer(QObject *parent): QObject(parent)
 {
+
+}
+
+void packetPlayer::initializeClassMembers()
+{
     tcpclient = new TcpClient();
     udpsender = new UdpSender();
-
+    tcpserver = new TcpServer();
     sendTimer = new QTimer();
     connect(sendTimer,&QTimer::timeout,this,&packetPlayer::playthePackets);
 
     connect(tcpclient,&TcpClient::connectionStatusChanged,this,[=](bool isActive)
             {
                 emit tcpConnectionStatus(isActive);
+            });
+    connect(tcpserver,&TcpServer::connectionStatusChanged,this,[=](bool isActive)
+            {
+                emit tcpServerConnectionStatus(isActive);
             });
 }
 
@@ -34,11 +43,36 @@ bool packetPlayer::connectTcp(QHostAddress dstIpAddress, QHostAddress srcIpAddre
     return true;
 }
 
+bool packetPlayer::startTcpServer(QHostAddress dstIpAddress, QHostAddress srcIpAddress, QString srcPort, QString dstPort)
+{
+    delete tcpserver;
+    tcpserver = nullptr;
+    tcpserver = new TcpServer();
+    if(!srcPort.isEmpty())
+    {
+        tcpserver->startServer(srcPort.toUShort());
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
 bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddress, QString srcPort, QString dstPort)
 {
-    delete udpsender;
-    udpsender = nullptr;
-    udpsender = new UdpSender();
+    // delete udpsender;
+    // udpsender = nullptr;
+    // if(udpsender == nullptr)
+    // {
+    //     qDebug()<<"deleted the udpsender";
+    // }
+
+    // udpsender = new UdpSender();
+    // if(udpsender != nullptr)
+    // {
+    //     qDebug()<<"created the udpsender";
+    // }
     // udpsender->m_udpSocket.;
     if(!srcIpAddress.isNull() && !srcPort.isEmpty())
     {
@@ -46,6 +80,10 @@ bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddre
     }
     if(!dstIpAddress.isNull() && !dstPort.isEmpty())
     {
+        udpTargetAddress.clear();
+        udpTargetport.clear();
+        udpTargetAddress = dstIpAddress.toString();
+        udpTargetport = dstPort;
         // pcapFileFilter pcapfilefilter;
         // // packetStorage = pcapFileFilter::makeFilteredRawPackets();
         qDebug()<<"return true";
@@ -57,8 +95,12 @@ bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddre
         qDebug()<<"return true";
         udpTargetAddress.clear();
         udpTargetport.clear();
-        udpTargetAddress = dstIpAddress.toString();
+        // udpTargetAddress = dstIpAddress.toString();
         udpTargetport = dstPort;
+        if(udpsender->m_udpSocket->isOpen())
+        {
+            qDebug()<<"udp sender is open";
+        }
         return true;
     }
     else
@@ -68,7 +110,7 @@ bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddre
     }
 }
 
-bool packetPlayer::filterPcapFile(bool udportcp,QString pcapFilePath, QString dstIpAddress, QString srcIpAddress, QString srcPort, QString dstPort)
+bool packetPlayer::filterPcapFile(bool udportcp,unsigned int sendingudportcp,QString pcapFilePath, QString dstIpAddress, QString srcIpAddress, QString srcPort, QString dstPort)
 {
     if(!pcapFilePath.isEmpty())
     {
@@ -86,7 +128,7 @@ bool packetPlayer::filterPcapFile(bool udportcp,QString pcapFilePath, QString ds
             packetIniIndex = 0;
             packetFinalIndex = packetStorage.size()-1;
             packetCurrentIndex = packetIniIndex;
-            sendudportcp = udportcp;
+            sendudportcp = sendingudportcp;
             return true;
         }
     }
@@ -107,18 +149,25 @@ void packetPlayer::playthePackets()
         }
         else
         {
+            qDebug()<<packetStorage[packetCurrentIndex].size();
             udpsender->broadcastDatagram(packetStorage[packetCurrentIndex],udpTargetport.toUShort());
-            qDebug()<<"sending";        }
+            qDebug()<<"sending";
+        }
     }
     else if(sendudportcp == 1)
     {
         tcpclient->sendData(packetStorage[packetCurrentIndex]);
     }
+    else if(sendudportcp == 2)
+    {
+        tcpserver->broadcastData(packetStorage[packetCurrentIndex]);
+    }
+
     if(packetCurrentIndex<=packetFinalIndex)
     {
         qDebug()<<"index"<<packetCurrentIndex;
         packetCurrentIndex++;
-        int temppercent = (100.0 * packetCurrentIndex) / packetFinalIndex;
+        unsigned int temppercent = (100.0 * packetCurrentIndex) / packetFinalIndex;
         qDebug()<<"percentparced"<<percentparced;
         if(temppercent > percentparced)
         {
@@ -188,7 +237,7 @@ void packetPlayer::setCurrIndexwithSlider(unsigned int percent)
 
 void packetPlayer::timerspeed(unsigned int timerSpeed)
 {
-    timerTimerout = 1000/timerSpeed;
+    timerTimerout = 1000.0/timerSpeed;
     if(sendTimer->isActive())
     {
         QMetaObject::invokeMethod(sendTimer, "stop", Qt::QueuedConnection);
@@ -200,5 +249,5 @@ void packetPlayer::timerspeed(unsigned int timerSpeed)
     // String-based alternative
     // QMetaObject::invokeMethod(sendTimer, "setInterval", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
 
-    QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
+    // QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
 }
