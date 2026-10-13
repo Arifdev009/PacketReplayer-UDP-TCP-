@@ -8,7 +8,8 @@ PcapFileParser::PcapFileParser(QObject *parent): QObject(parent)
 void PcapFileParser::processFilePath(QString pcapFilePath)
 {
     // Use the factory method to automatically detect and create the correct reader
-    std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::getReader(pcapFilePath.toStdString()));
+    std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::tryCreateReader(pcapFilePath.toStdString()));
+
 
     // Check if the file format is supported or if the pointer is null
     if (!reader) {
@@ -29,12 +30,20 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
     QMap<QString, QSet<QString>>  mapUdpPorttoPort;
     QMap<QString, QSet<QString>>  mapUdpIpcomboSrcPort;
     QMap<QString, QSet<QString>>  mapUdpIpSrcPortComboDstCombo;
+    QSet<QString> qsetUdpSrcIp;
+    QSet<QString> qsetUdpDstIp;
+    QSet<QString> qsetUdpSrcPort;
+    QSet<QString> qsetUdpDstPort;
 
 
     QMap<QString, QSet<QString>>  mapTcpIptoIP;
     QMap<QString, QSet<QString>>  mapTcpPorttoPort;
     QMap<QString, QSet<QString>>  mapTcpIpcomboSrcPort;
     QMap<QString, QSet<QString>>  mapTcpIpSrcPortComboDstCombo;
+    QSet<QString> qsetTcpSrcIp;
+    QSet<QString> qsetTcpDstIp;
+    QSet<QString> qsetTcpSrcPort;
+    QSet<QString> qsetTcpDstPort;
 
     pcpp::RawPacket rawPacket;
 
@@ -67,6 +76,7 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                 pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
                 srcIP = QString::fromStdString(ipLayer->getSrcIPv4Address().toString());
                 dstIP = QString::fromStdString(ipLayer->getDstIPv4Address().toString());
+                qsetTcpDstIp.insert(dstIP);
                 hasIP = true;
             }
             // Extract IPv6 addresses
@@ -79,10 +89,39 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
             }
             if (hasIP && hasPort)
             {
-                mapTcpIptoIP[srcIP].insert(dstIP);
-                mapTcpPorttoPort[srcPort].insert(dstPort);
-                mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
-                mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                if(!srcIP.isEmpty())
+                {
+                    qsetTcpSrcIp.insert(srcIP);
+                }
+                if(!dstIP.isEmpty())
+                {
+                    qsetTcpDstIp.insert(dstIP);
+                }
+                if(!srcPort.isEmpty())
+                {
+                    qsetTcpSrcPort.insert(srcPort);
+                }
+                if(!dstPort.isEmpty())
+                {
+                    qsetTcpDstPort.insert(dstPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                {
+                    mapTcpIptoIP[srcIP].insert(dstIP);
+                }
+                if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                {
+                    mapTcpPorttoPort[srcPort].insert(dstPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                {
+                    mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty() &&!srcPort.isEmpty() && !dstPort.isEmpty())
+                {
+                    mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                }
+
             }
         }
         else if (parsedPacket.isPacketOfType(pcpp::UDP))
@@ -110,10 +149,38 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
             }
             if (hasIP && hasPort)
             {
-                mapUdpIptoIP[srcIP].insert(dstIP);
-                mapUdpPorttoPort[srcPort].insert(dstPort);
-                mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
-                mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                if(!srcIP.isEmpty())
+                {
+                    qsetUdpSrcIp.insert(srcIP);
+                }
+                if(!dstIP.isEmpty())
+                {
+                    qsetUdpDstIp.insert(dstIP);
+                }
+                if(!srcPort.isEmpty())
+                {
+                    qsetUdpSrcPort.insert(srcPort);
+                }
+                if(!dstPort.isEmpty())
+                {
+                    qsetUdpDstPort.insert(dstPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                {
+                    mapUdpIptoIP[srcIP].insert(dstIP);
+                }
+                if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                {
+                    mapUdpPorttoPort[srcPort].insert(dstPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                {
+                    mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                }
+                if(!srcIP.isEmpty() && !dstIP.isEmpty() &&!srcPort.isEmpty() && !dstPort.isEmpty())
+                {
+                    mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                }
             }
         }
         else
@@ -133,7 +200,6 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                     }
                 }
 
-
                 if (isTcp)
                 {
                     hasTcpPackets = true;
@@ -151,20 +217,40 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                         dstIP = QString::fromStdString(ipLayer->getDstIPv4Address().toString());
                         hasIP = true;
                     }
-                    // Extract IPv6 addresses
-                    else if (parsedPacket.isPacketOfType(pcpp::IPv6))
-                    {
-                        pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
-                        srcIP = QString::fromStdString(ipLayer->getSrcIPv6Address().toString());
-                        dstIP = QString::fromStdString(ipLayer->getDstIPv6Address().toString());
-                        hasIP = true;
-                    }
                     if (hasIP || hasPort)
                     {
-                        mapTcpIptoIP[srcIP].insert(dstIP);
-                        mapTcpPorttoPort[srcPort].insert(dstPort);
-                        mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
-                        mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        if(!srcIP.isEmpty())
+                        {
+                            qsetTcpSrcIp.insert(srcIP);
+                        }
+                        if(!dstIP.isEmpty())
+                        {
+                            qsetTcpDstIp.insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty())
+                        {
+                            qsetTcpSrcPort.insert(srcPort);
+                        }
+                        if(!dstPort.isEmpty())
+                        {
+                            qsetTcpDstPort.insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                        {
+                            mapTcpIptoIP[srcIP].insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapTcpPorttoPort[srcPort].insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                        {
+                            mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() &&!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        }
                     }
                 }
                 else if (isUdp)
@@ -175,7 +261,7 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                     // dstPort = QString::number(udpLayer->getDstPort());
                     // hasPort = true;
                     // Extract IPv4 addresses
-                    uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
+                    // uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
                     if (parsedPacket.isPacketOfType(pcpp::IPv4))
                     {
                         // pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
@@ -183,20 +269,161 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
                         dstIP = QString::fromStdString(ipLayer->getDstIPv4Address().toString());
                         hasIP = true;
                     }
-                    // Extract IPv6 addresses
-                    else if (parsedPacket.isPacketOfType(pcpp::IPv6))
+                    if (hasIP || hasPort)
                     {
-                        pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
-                        srcIP = QString::fromStdString(ipLayer->getSrcIPv6Address().toString());
-                        dstIP = QString::fromStdString(ipLayer->getDstIPv6Address().toString());
+                        if(!srcIP.isEmpty())
+                        {
+                            qsetUdpSrcIp.insert(srcIP);
+                        }
+                        if(!dstIP.isEmpty())
+                        {
+                            qsetUdpDstIp.insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty())
+                        {
+                            qsetUdpSrcPort.insert(srcPort);
+                        }
+                        if(!dstPort.isEmpty())
+                        {
+                            qsetUdpDstPort.insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                        {
+                            mapUdpIptoIP[srcIP].insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapUdpPorttoPort[srcPort].insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                        {
+                            mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() &&!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        }
+                    }
+                }
+            }
+            else if(parsedPacket.isPacketOfType(pcpp::IPv6))
+            {
+                // Check for IPv6 Layer
+                pcpp::IPv6Layer* ip6Layer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+                if (ip6Layer != nullptr)
+                {
+                    // In IPv6, the field is called 'nextHeader'
+                    uint8_t nextHeader = ip6Layer->getIPv6Header()->nextHeader;
+                    if (nextHeader == 6)
+                    {
+                        isTcp = true;
+                    } else if (nextHeader == 17)
+                    {
+                        isUdp = true;
+                    }
+                }
+                if (isTcp)
+                {
+                    hasTcpPackets = true;
+
+                    // // pcpp::TcpLayer* tcpLayer = parsedPacket.getLayerOfType<pcpp::TcpLayer>();
+                    // srcPort = QString::number(ipLa->getSrcPort());
+                    // dstPort = QString::number(tcpLayer->getDstPort());
+                    // hasPort = true;
+
+                    if (parsedPacket.isPacketOfType(pcpp::IPv6))
+                    {
+                        // pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+                        srcIP = QString::fromStdString(ip6Layer->getSrcIPv6Address().toString());
+                        dstIP = QString::fromStdString(ip6Layer->getDstIPv6Address().toString());
                         hasIP = true;
                     }
                     if (hasIP || hasPort)
                     {
-                        mapUdpIptoIP[srcIP].insert(dstIP);
-                        mapUdpPorttoPort[srcPort].insert(dstPort);
-                        mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
-                        mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        if(!srcIP.isEmpty())
+                        {
+                            qsetTcpSrcIp.insert(srcIP);
+                        }
+                        if(!dstIP.isEmpty())
+                        {
+                            qsetTcpDstIp.insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty())
+                        {
+                            qsetTcpSrcPort.insert(srcPort);
+                        }
+                        if(!dstPort.isEmpty())
+                        {
+                            qsetTcpDstPort.insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                        {
+                            mapTcpIptoIP[srcIP].insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapTcpPorttoPort[srcPort].insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                        {
+                            mapTcpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapTcpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        }
+                    }
+                }
+                else if (isUdp)
+                {
+                    hasUdpPackets = true;
+                    // pcpp::iphdr* ipHeader = ipLayer->getIPv4Header();
+                    // srcPort = QString::number(ipHeader->ipId);
+                    // dstPort = QString::number(udpLayer->getDstPort());
+                    // hasPort = true;
+                    // Extract IPv4 addresses
+                    // uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
+                    if (parsedPacket.isPacketOfType(pcpp::IPv6))
+                    {
+                        // pcpp::IPv6Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+                        srcIP = QString::fromStdString(ip6Layer->getSrcIPv6Address().toString());
+                        dstIP = QString::fromStdString(ip6Layer->getDstIPv6Address().toString());
+                        hasIP = true;
+                    }
+                    if (hasIP || hasPort)
+                    {
+                        if(!srcIP.isEmpty())
+                        {
+                            qsetUdpSrcIp.insert(srcIP);
+                        }
+                        if(!dstIP.isEmpty())
+                        {
+                            qsetUdpDstIp.insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty())
+                        {
+                            qsetUdpSrcPort.insert(srcPort);
+                        }
+                        if(!dstPort.isEmpty())
+                        {
+                            qsetUdpDstPort.insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty())
+                        {
+                            mapUdpIptoIP[srcIP].insert(dstIP);
+                        }
+                        if(!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapUdpPorttoPort[srcPort].insert(dstPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() && !srcPort.isEmpty())
+                        {
+                            mapUdpIpcomboSrcPort[srcIP+"\t"+dstIP].insert(srcPort);
+                        }
+                        if(!srcIP.isEmpty() && !dstIP.isEmpty() &&!srcPort.isEmpty() && !dstPort.isEmpty())
+                        {
+                            mapUdpIpSrcPortComboDstCombo[srcIP+"\t"+dstIP+"\t"+srcPort].insert(dstPort);
+                        }
                     }
                 }
             }
@@ -207,11 +434,11 @@ void PcapFileParser::processFilePath(QString pcapFilePath)
     emit udportcpExists(hasUdpPackets,hasTcpPackets);
     if(hasUdpPackets)
     {
-        emit udpList(mapUdpIptoIP,mapUdpPorttoPort,mapUdpIpcomboSrcPort,mapUdpIpSrcPortComboDstCombo);
+        emit udpList(qsetUdpSrcIp,qsetUdpDstIp,qsetUdpSrcPort,qsetUdpDstPort,mapUdpIptoIP,mapUdpPorttoPort,mapUdpIpcomboSrcPort,mapUdpIpSrcPortComboDstCombo);
     }
     if(hasTcpPackets)
     {
-        emit tcpList(mapTcpIptoIP,mapTcpPorttoPort,mapTcpIpcomboSrcPort,mapTcpIpSrcPortComboDstCombo);
+        emit tcpList(qsetTcpSrcIp,qsetTcpDstIp,qsetTcpSrcPort,qsetTcpDstPort,mapTcpIptoIP,mapTcpPorttoPort,mapTcpIpcomboSrcPort,mapTcpIpSrcPortComboDstCombo);
     }
 
     // QMap<QString, QSet<QString>> networkData;
