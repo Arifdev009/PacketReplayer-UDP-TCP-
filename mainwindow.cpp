@@ -48,6 +48,26 @@ MainWindow::MainWindow(QWidget *parent)
                 ui->playerProgressBar->setValue(percent);
             });
 
+
+    connect(this,&MainWindow::setTimerSpeed,packetplayer,&packetPlayer::timerspeed);
+    connect(this,&MainWindow::setPausethePackets,packetplayer,&packetPlayer::pausethePackets);
+    connect(this,&MainWindow::setStartorstopthePackets,packetplayer,&packetPlayer::startorstopthePackets);
+    connect(this,&MainWindow::setUICurrIndexwithSlider,packetplayer,&packetPlayer::setCurrIndexwithSlider);
+
+    connect(this,&MainWindow::setCreateUDP,packetplayer,&packetPlayer::connectUdp);
+    connect(this,&MainWindow::setCreateTcp,packetplayer,&packetPlayer::connectTcp);
+    connect(this,&MainWindow::setCreateTcpServer,packetplayer,&packetPlayer::startTcpServer);
+
+    connect(this,&MainWindow::createparseFilterPcapFile,packetplayer,&packetPlayer::filterPcapFile);
+
+    connect(packetplayer,&packetPlayer::creatingUdpStatus,this,&MainWindow::creatingUdpStatus);
+    connect(packetplayer,&packetPlayer::creatingTcpStatus,this,&MainWindow::creatingTcpStatus);
+    connect(packetplayer,&packetPlayer::creatingTcpServerStatus,this,&MainWindow::creatingTcpServerStatus);
+
+    connect(packetplayer,&packetPlayer::parseFilterPcapFileStatus,this,&MainWindow::parseFilterPcapFileStatus);
+
+
+
     pcapFileParserThread = new QThread();
     pcapfileparser = new PcapFileParser;
 
@@ -63,9 +83,13 @@ MainWindow::MainWindow(QWidget *parent)
 
 
     ui->filteringComboBox->setPlaceholderText("select Filter");
+    ui->filteringComboBox->addItem("Src Port");
+    ui->filteringComboBox->addItem("Dst Port");
+    ui->filteringComboBox->addItem("Src Ip");
+    ui->filteringComboBox->addItem("Dst Ip");
     ui->filteringComboBox->addItem("Port");
     ui->filteringComboBox->addItem("IP Address");
-    ui->filteringComboBox->addItem("Both");
+    ui->filteringComboBox->addItem("Port and Ip");
 
     ui->filteringComboBox->setEnabled(false);
     ui->udporTcpComboBox->setEnabled(false);
@@ -88,7 +112,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui->playerHorizontalSlider->setEnabled(false);
     ui->playerProgressBar->setEnabled(false);
-    ui->connectTCPPushButton->setEnabled(false);
+    ui->connectUDPTCPPushButton->setEnabled(false);
     ui->playPushButton->setEnabled(false);
     ui->pausePushButton->setEnabled(false);
 
@@ -96,8 +120,13 @@ MainWindow::MainWindow(QWidget *parent)
             this, [=](bool udpExists, bool tcpExists)
             {
 
+                QString currText = ui->udporTcpComboBox->currentText();
+
                 ui->udporTcpComboBox->clear();
-                ui->filteringComboBox->setCurrentIndex(-1);
+
+
+
+
 
                 mapUdpIptoIP.clear();
                 mapUdpPorttoPort.clear();
@@ -109,6 +138,9 @@ MainWindow::MainWindow(QWidget *parent)
                 mapTcpIpcomboSrcPort.clear();
                 mapTcpIpSrcPortComboDstCombo.clear();
 
+
+                // bool protocolPacketsExist = false;
+
                 // You can now use the booleans freely inside this block
                 if (udpExists)
                 {
@@ -119,11 +151,20 @@ MainWindow::MainWindow(QWidget *parent)
                 }
                 if (tcpExists)
                 {
+
                     ui->udporTcpComboBox->addItem("TCP");
+
+
 
                     ui->filteringComboBox->setEnabled(true);
                     ui->udporTcpComboBox->setEnabled(true);
                 }
+
+                if(currText == "TCP" || currText == "UDP")
+                {
+                    ui->udporTcpComboBox->setCurrentText(currText);
+                }
+
                 if(!udpExists && !tcpExists)
                 {
                     QMessageBox::information(this, "Warning", "Udp or Tcp packets does not exist.");
@@ -131,25 +172,33 @@ MainWindow::MainWindow(QWidget *parent)
             });
 
     connect(pcapfileparser, &PcapFileParser::tcpList,
-            this, [=] (QMap<QString, QSet<QString>>  tempMapTcpIptoIP,QMap<QString, QSet<QString>>  tempMapTcpPorttoPort,QMap<QString, QSet<QString>>  tempMapTcpIpcomboSrcPort,QMap<QString, QSet<QString>>  tempMapTcpIpSrcPortComboDstCombo)
+            this, [=] (QSet<QString> tempqsetTcpSrcIp,QSet<QString> tempqsetTcpDstIp,QSet<QString> tempqsetTcpSrcPort,QSet<QString> tempqsetTcpDstPort,QMap<QString, QSet<QString>>  tempMapTcpIptoIP,QMap<QString, QSet<QString>>  tempMapTcpPorttoPort,QMap<QString, QSet<QString>>  tempMapTcpIpcomboSrcPort,QMap<QString, QSet<QString>>  tempMapTcpIpSrcPortComboDstCombo)
             {
+
+                tcpSrcPortList.clear();
+                tcpSrcIpList.clear();
+
+
+
+                tcpDstPortList.clear();
+                tcpDstIplist.clear();
                 if(!tempMapTcpIptoIP.isEmpty())
                 {
                     mapTcpIptoIP = tempMapTcpIptoIP;
-                    for (auto [ipAddress, protocolSet] : mapTcpIptoIP.asKeyValueRange())
-                    {
-                        qDebug() << "IP Address:" << ipAddress;
-                        TcpIpList.push_back(ipAddress);
-                    }
+                    // for (auto [ipAddress, protocolSet] : mapTcpIptoIP.asKeyValueRange())
+                    // {
+                    //     qDebug() << "IP Address:" << ipAddress;
+                    //     tcpSrcIpList.push_back(ipAddress);
+                    // }
                 }
                 if(!tempMapTcpPorttoPort.isEmpty())
                 {
                     mapTcpPorttoPort = tempMapTcpPorttoPort;
-                    for (auto [ipAddress, protocolSet] : mapTcpPorttoPort.asKeyValueRange())
-                    {
-                        qDebug() << "IP Address:" << ipAddress;
-                        TcpPortList.push_back(ipAddress);
-                    }
+                    // for (auto [ipAddress, protocolSet] : mapTcpPorttoPort.asKeyValueRange())
+                    // {
+                    //     qDebug() << "IP Address:" << ipAddress;
+                    //     tcpSrcPortList.push_back(ipAddress);
+                    // }
                 }
                 if(!tempMapTcpIpcomboSrcPort.isEmpty())
                 {
@@ -159,29 +208,83 @@ MainWindow::MainWindow(QWidget *parent)
                 {
                     mapTcpIpSrcPortComboDstCombo = tempMapTcpIpSrcPortComboDstCombo;
                 }
+                if(!tempqsetTcpSrcIp.isEmpty())
+                {
+                    // qsetTcpSrcIp = tempqsetTcpSrcIp;
+                    for(const QString  &tempIp: std::as_const(tempqsetTcpSrcIp))
+                    {
+                        tcpSrcIpList.append(tempIp);
+                    }
+                    std::sort(tcpSrcIpList.begin(),tcpSrcIpList.end());
+                    // tcpSrcIpList = tempqsetTcpSrcIp;
+                }
+                if(!tempqsetTcpDstIp.isEmpty())
+                {
+                    // qsetTcpDstIp = tempqsetTcpDstIp;
+                    for(const QString  &tempIp: std::as_const(tempqsetTcpDstIp))
+                    {
+                        tcpDstIplist.append(tempIp);
+                    }
+                    std::sort(tcpDstIplist.begin(),tcpDstIplist.end());
+                }
+                if(!tempqsetTcpSrcPort.isEmpty())
+                {
+                    // qsetTcpSrcPort = tempqsetTcpSrcPort;
+                    for(const QString  &tempIp: std::as_const(tempqsetTcpSrcPort))
+                    {
+                        tcpSrcPortList.append(tempIp);
+                    }
+                    std::sort(tcpSrcPortList.begin(),tcpSrcPortList.end());
+                }
+                if(!tempqsetTcpDstPort.isEmpty())
+                {
+                    // qsetTcpDstPort = tempqsetTcpDstPort;
+                    for(const QString  &tempIp: std::as_const(tempqsetTcpDstPort))
+                    {
+                        tcpDstPortList.append(tempIp);
+                    }
+                    std::sort(tcpDstPortList.begin(),tcpDstPortList.end());
+                }
+
+
+                if(ui->udporTcpComboBox->currentIndex() != -1)
+                {
+                    int currIndex = ui->filteringComboBox->currentIndex();
+
+                    ui->filteringComboBox->setCurrentIndex(currIndex);
+                    on_filteringComboBox_currentIndexChanged(currIndex);
+                }
+                else
+                {
+                    ui->filteringComboBox->setCurrentIndex(-1);
+                }
+
             });
 
     connect(pcapfileparser, &PcapFileParser::udpList,
-            this, [=] (QMap<QString, QSet<QString>>  tempMapUdpIptoIP,QMap<QString, QSet<QString>>  tempMapUdpPorttoPort,QMap<QString, QSet<QString>>  tempMapUdpIpcomboSrcPort,QMap<QString, QSet<QString>>  tempMapUdpIpSrcPortComboDstCombo)
+            this, [=] (QSet<QString> tempqsetUdpSrcIp,QSet<QString> tempqsetUdpDstIp,QSet<QString> tempqsetUdpSrcPort,QSet<QString> tempqsetUdpDstPort,QMap<QString, QSet<QString>>  tempMapUdpIptoIP,QMap<QString, QSet<QString>>  tempMapUdpPorttoPort,QMap<QString, QSet<QString>>  tempMapUdpIpcomboSrcPort,QMap<QString, QSet<QString>>  tempMapUdpIpSrcPortComboDstCombo)
             {
-
+                udpSrcPortList.clear();
+                udpSrcIpList.clear();
+                udpDstPortList.clear();
+                udpDstIpList.clear();
                 if(!tempMapUdpIptoIP.isEmpty())
                 {
                     mapUdpIptoIP = tempMapUdpIptoIP;
-                    for (auto [ipAddress, protocolSet] : tempMapUdpIptoIP.asKeyValueRange())
-                    {
-                        qDebug() << "IP Address:" << ipAddress;
-                        UdpIpList.push_back(ipAddress);
-                    }
+                    // for (auto [ipAddress, protocolSet] : tempMapUdpIptoIP.asKeyValueRange())
+                    // {
+                    //     qDebug() << "IP Address:" << ipAddress;
+                    //     udpSrcIpList.push_back(ipAddress);
+                    // }
                 }
                 if(!tempMapUdpPorttoPort.isEmpty())
                 {
                     mapUdpPorttoPort = tempMapUdpPorttoPort;
-                    for (auto [ipAddress, protocolSet] : mapUdpPorttoPort.asKeyValueRange())
-                    {
-                        qDebug() << "IP Address:" << ipAddress;
-                        udpPortList.push_back(ipAddress);
-                    }
+                    // for (auto [ipAddress, protocolSet] : mapUdpPorttoPort.asKeyValueRange())
+                    // {
+                    //     qDebug() << "IP Address:" << ipAddress;
+                    //     udpSrcPortList.push_back(ipAddress);
+                    // }
                 }
                 if(!tempMapUdpIpcomboSrcPort.isEmpty())
                 {
@@ -190,6 +293,44 @@ MainWindow::MainWindow(QWidget *parent)
                 if(!tempMapUdpIpSrcPortComboDstCombo.isEmpty())
                 {
                     mapUdpIpSrcPortComboDstCombo = tempMapUdpIpSrcPortComboDstCombo;
+                }
+                if(!tempqsetUdpSrcIp.isEmpty())
+                {
+                    // qsetUdpSrcIp = tempqsetUdpSrcIp;
+                    for(const QString  &tempIp: std::as_const(tempqsetUdpSrcIp))
+                    {
+                        udpSrcIpList.append(tempIp);
+                    }
+                    std::sort(udpSrcIpList.begin(),udpSrcIpList.end());
+
+                }
+                if(!tempqsetUdpDstIp.isEmpty())
+                {
+                    // qsetUdpDstIp = tempqsetUdpDstIp;
+                    for(const QString  &tempIp: std::as_const(tempqsetUdpDstIp))
+                    {
+                        udpDstIpList.append(tempIp);
+                    }
+                    std::sort(udpDstIpList.begin(),udpDstIpList.end());
+
+                }
+                if(!tempqsetUdpSrcPort.isEmpty())
+                {
+                    // qsetUdpSrcPort = tempqsetUdpSrcPort;
+                    for(const QString  &tempIp: std::as_const(tempqsetUdpSrcPort))
+                    {
+                        udpSrcPortList.append(tempIp);
+                    }
+                    std::sort(udpSrcPortList.begin(),udpSrcPortList.end());
+                }
+                if(!tempqsetUdpDstPort.isEmpty())
+                {
+                    // qsetUdpDstPort = tempqsetUdpDstPort;
+                    for(const QString  &tempIp: std::as_const(tempqsetUdpDstPort))
+                    {
+                        udpDstPortList.append(tempIp);
+                    }
+                    std::sort(udpDstPortList.begin(),udpDstPortList.end());
                 }
             });
 }
@@ -224,22 +365,11 @@ void MainWindow::on_browsePushButton_clicked()
 
     if(!fileName.isEmpty())
     {
-        if(pcapFilePath.isEmpty())
-        {
-            pcapFilePath = fileName;
-            ui->bowseLineEdit->clear();
-            ui->bowseLineEdit->setText(fileName);
-            emit startParsing(pcapFilePath);
-            // pcapfileparser->processFilePath(pcapFilePath);
-        }
-        else if(pcapFilePath != fileName)
-        {
-            pcapFilePath = fileName;
-            ui->bowseLineEdit->clear();
-            ui->bowseLineEdit->setText(fileName);
-            emit startParsing(pcapFilePath);
-            // pcapfileparser->processFilePath(pcapFilePath);
-        }
+        pcapFilePath = fileName;
+        ui->bowseLineEdit->clear();
+        ui->bowseLineEdit->setText(fileName);
+        on_playPushButton_clicked(false);
+        emit startParsing(pcapFilePath);
     }
 }
 
@@ -261,39 +391,68 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
     }
     if(index == 0)
     {
-        ui->srcPortListWidget->setEnabled(true);
-        ui->dstPortListWidget->setEnabled(true);
-
         ui->srcIpListWidget->setEnabled(false);
         ui->dstIpListWidget->setEnabled(false);
-        ui->srcIpListWidget->clear();
-        ui->dstIpListWidget->clear();
+        ui->srcPortListWidget->setEnabled(true);
+        ui->dstPortListWidget->setEnabled(false);
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
 
         ui->srcIpListWidget->clear();
         ui->dstIpListWidget->clear();
         ui->srcPortListWidget->clear();
         ui->dstPortListWidget->clear();
 
+        ui->srcPortListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
         if(ui->udporTcpComboBox->currentText() == "UDP")
         {
-            ui->srcPortListWidget->addItems(udpPortList);
+            ui->srcPortListWidget->addItems(udpSrcPortList);
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
-            ui->srcPortListWidget->addItems(TcpPortList);
+            ui->srcPortListWidget->addItems(tcpSrcPortList);
         }
 
         selectedsrcIP.clear();
         selectedsrcPort.clear();
         selecteddstIp.clear();
         selecteddstPort.clear();
-
     }
     else if(index == 1)
     {
-        ui->srcIpListWidget->setEnabled(true);
-        ui->dstIpListWidget->setEnabled(true);
+        ui->srcIpListWidget->setEnabled(false);
+        ui->dstIpListWidget->setEnabled(false);
+        ui->srcPortListWidget->setEnabled(false);
+        ui->dstPortListWidget->setEnabled(true);
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
 
+        ui->srcIpListWidget->clear();
+        ui->dstIpListWidget->clear();
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
+
+        ui->dstPortListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            ui->dstPortListWidget->addItems(udpDstPortList);
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            ui->dstPortListWidget->addItems(tcpDstPortList);
+        }
+
+        selectedsrcIP.clear();
+        selectedsrcPort.clear();
+        selecteddstIp.clear();
+        selecteddstPort.clear();
+    }
+    else if(index == 2)
+    {
+        ui->srcIpListWidget->setEnabled(true);
+        ui->dstIpListWidget->setEnabled(false);
         ui->srcPortListWidget->setEnabled(false);
         ui->dstPortListWidget->setEnabled(false);
         ui->srcPortListWidget->clear();
@@ -304,21 +463,15 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         ui->srcPortListWidget->clear();
         ui->dstPortListWidget->clear();
 
-        if(UdpIpList.isEmpty())
-        {
-            qDebug()<<"udp empty";
-        }
-        if(TcpIpList.isEmpty())
-        {
-            qDebug()<<"tcp empty";
-        }
+        ui->srcIpListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
         if(ui->udporTcpComboBox->currentText() == "UDP")
         {
-            ui->srcIpListWidget->addItems(UdpIpList);
+            ui->srcIpListWidget->addItems(udpSrcIpList);
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
-            ui->srcIpListWidget->addItems(TcpIpList);
+            ui->srcIpListWidget->addItems(tcpSrcIpList);
         }
 
         selectedsrcIP.clear();
@@ -326,7 +479,106 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         selecteddstIp.clear();
         selecteddstPort.clear();
     }
-    else if(index == 2)
+    else if(index == 3)
+    {
+        ui->srcIpListWidget->setEnabled(false);
+        ui->dstIpListWidget->setEnabled(true);
+        ui->srcPortListWidget->setEnabled(false);
+        ui->dstPortListWidget->setEnabled(false);
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
+
+        ui->srcIpListWidget->clear();
+        ui->dstIpListWidget->clear();
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
+
+        ui->dstIpListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            ui->dstIpListWidget->addItems(udpDstIpList);
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            ui->dstIpListWidget->addItems(udpSrcIpList);
+        }
+
+        selectedsrcIP.clear();
+        selectedsrcPort.clear();
+        selecteddstIp.clear();
+        selecteddstPort.clear();
+    }
+    else if(index == 4)
+    {
+        ui->srcPortListWidget->setEnabled(true);
+        ui->dstPortListWidget->setEnabled(true);
+
+        ui->srcIpListWidget->setEnabled(false);
+        ui->dstIpListWidget->setEnabled(false);
+
+
+        ui->srcIpListWidget->clear();
+        ui->dstIpListWidget->clear();
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
+
+        ui->srcPortListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        ui->dstPortListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            ui->srcPortListWidget->addItems(udpSrcPortList);
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            ui->srcPortListWidget->addItems(tcpSrcPortList);
+        }
+
+        selectedsrcIP.clear();
+        selectedsrcPort.clear();
+        selecteddstIp.clear();
+        selecteddstPort.clear();
+    }
+    else if(index == 5)
+    {
+        ui->srcIpListWidget->setEnabled(true);
+        ui->dstIpListWidget->setEnabled(true);
+
+        ui->srcPortListWidget->setEnabled(false);
+        ui->dstPortListWidget->setEnabled(false);
+
+        ui->srcIpListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        ui->dstIpListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
+        ui->srcIpListWidget->clear();
+        ui->dstIpListWidget->clear();
+        ui->srcPortListWidget->clear();
+        ui->dstPortListWidget->clear();
+
+        if(udpSrcIpList.isEmpty())
+        {
+            qDebug()<<"udp empty";
+        }
+        if(tcpSrcIpList.isEmpty())
+        {
+            qDebug()<<"tcp empty";
+        }
+        if(ui->udporTcpComboBox->currentText() == "UDP")
+        {
+            ui->srcIpListWidget->addItems(udpSrcIpList);
+        }
+        else if(ui->udporTcpComboBox->currentText() == "TCP")
+        {
+            ui->srcIpListWidget->addItems(tcpSrcIpList);
+        }
+
+        selectedsrcIP.clear();
+        selectedsrcPort.clear();
+        selecteddstIp.clear();
+        selecteddstPort.clear();
+    }
+    else if(index == 6)
     {
 
         ui->srcIpListWidget->setEnabled(true);
@@ -340,13 +592,18 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
         ui->srcPortListWidget->clear();
         ui->dstPortListWidget->clear();
 
+        ui->srcIpListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        ui->dstIpListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        ui->srcPortListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+        ui->dstPortListWidget->setSelectionMode(QAbstractItemView::MultiSelection);
+
         if(ui->udporTcpComboBox->currentText() == "UDP")
         {
-            ui->srcIpListWidget->addItems(UdpIpList);
+            ui->srcIpListWidget->addItems(udpSrcIpList);
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
-            ui->srcIpListWidget->addItems(TcpIpList);
+            ui->srcIpListWidget->addItems(tcpSrcIpList);
         }
 
         selectedsrcIP.clear();
@@ -358,6 +615,7 @@ void MainWindow::on_filteringComboBox_currentIndexChanged(int index)
 
 void MainWindow::on_udporTcpComboBox_currentIndexChanged(int index)
 {
+    Q_UNUSED(index);
     if(ui->udporTcpComboBox->currentText() == "UDP")
     {
         if(ui->filteringComboBox->currentIndex() == 0)
@@ -371,6 +629,22 @@ void MainWindow::on_udporTcpComboBox_currentIndexChanged(int index)
         else if(ui->filteringComboBox->currentIndex() == 2)
         {
             on_filteringComboBox_currentIndexChanged(2);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 3)
+        {
+            on_filteringComboBox_currentIndexChanged(3);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 4)
+        {
+            on_filteringComboBox_currentIndexChanged(4);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 5)
+        {
+            on_filteringComboBox_currentIndexChanged(5);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 6)
+        {
+            on_filteringComboBox_currentIndexChanged(6);
         }
     }
     else if(ui->udporTcpComboBox->currentText() == "TCP")
@@ -386,6 +660,22 @@ void MainWindow::on_udporTcpComboBox_currentIndexChanged(int index)
         else if(ui->filteringComboBox->currentIndex() == 2)
         {
             on_filteringComboBox_currentIndexChanged(2);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 3)
+        {
+            on_filteringComboBox_currentIndexChanged(3);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 4)
+        {
+            on_filteringComboBox_currentIndexChanged(4);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 5)
+        {
+            on_filteringComboBox_currentIndexChanged(5);
+        }
+        else if(ui->filteringComboBox->currentIndex() == 6)
+        {
+            on_filteringComboBox_currentIndexChanged(6);
         }
     }
 }
@@ -414,6 +704,7 @@ void MainWindow::on_srcIpListWidget_itemClicked(QListWidgetItem *item)
             {
                 dstIpList.push_back(port);
             }
+            std::sort(dstIpList.begin(),dstIpList.end());
             ui->dstIpListWidget->addItems(dstIpList);
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
@@ -423,6 +714,7 @@ void MainWindow::on_srcIpListWidget_itemClicked(QListWidgetItem *item)
             {
                 dstIpList.push_back(port);
             }
+            std::sort(dstIpList.begin(),dstIpList.end());
             ui->dstIpListWidget->addItems(dstIpList);
         }
     }
@@ -463,20 +755,29 @@ void MainWindow::on_dstIpListWidget_itemClicked(QListWidgetItem *item)
 
         if(ui->udporTcpComboBox->currentText() == "UDP")
         {
-            if(ui->filteringComboBox->currentIndex() == 2)
+            if(ui->filteringComboBox->currentIndex() == 6)
             {
-                for (const QString &port : mapUdpIpcomboSrcPort[selectedsrcIP+"\t"+item->text()])
+                if(mapUdpIpcomboSrcPort[selectedsrcIP+"\t"+item->text()].isEmpty())
+                {
+                    qDebug()<<"map is empty";
+                }
+                for (const QString &port : std::as_const(mapUdpIpcomboSrcPort[selectedsrcIP+"\t"+item->text()]))
                 {
                     srcPortList.push_back(port);
                 }
+                std::sort(srcPortList.begin(),srcPortList.end());
                 ui->srcPortListWidget->addItems(srcPortList);
             }
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
-            if(ui->filteringComboBox->currentIndex() == 2)
+            if(ui->filteringComboBox->currentIndex() == 6)
             {
                 qDebug()<<"hello";
+                if(mapTcpIpcomboSrcPort[selectedsrcIP+"\t"+item->text()].isEmpty())
+                {
+                    qDebug()<<"map is empty";
+                }
                 for (const QString &port : mapTcpIpcomboSrcPort[selectedsrcIP+"\t"+item->text()])
                 {
                     srcPortList.push_back(port);
@@ -486,6 +787,7 @@ void MainWindow::on_dstIpListWidget_itemClicked(QListWidgetItem *item)
                 {
                     qDebug()<<"empty";
                 }
+                std::sort(srcPortList.begin(),srcPortList.end());
                 ui->srcPortListWidget->addItems(srcPortList);
             }
         }
@@ -519,40 +821,44 @@ void MainWindow::on_srcPortListWidget_itemClicked(QListWidgetItem *item)
 
         if(ui->udporTcpComboBox->currentText() == "UDP")
         {
-            if(ui->filteringComboBox->currentIndex() == 0)
+            if(ui->filteringComboBox->currentIndex() == 4)
             {
                 for (const QString &port : mapUdpPorttoPort[item->text()])
                 {
                     dstPortList.push_back(port);
                 }
+                std::sort(dstPortList.begin(),dstPortList.end());
                 ui->dstPortListWidget->addItems(dstPortList);
             }
-            else if(ui->filteringComboBox->currentIndex() == 2)
+            else if(ui->filteringComboBox->currentIndex() == 6)
             {
                 for (const QString &port : mapUdpIpSrcPortComboDstCombo[selectedsrcIP+"\t"+selecteddstIp+"\t"+item->text()])
                 {
                     dstPortList.push_back(port);
                 }
+                std::sort(dstPortList.begin(),dstPortList.end());
                 ui->dstPortListWidget->addItems(dstPortList);
             }
         }
         else if(ui->udporTcpComboBox->currentText() == "TCP")
         {
-            if(ui->filteringComboBox->currentIndex() == 0)
+            if(ui->filteringComboBox->currentIndex() == 4)
             {
                 for (const QString &port : mapTcpPorttoPort[item->text()])
                 {
                     dstPortList.push_back(port);
                 }
+                std::sort(dstPortList.begin(),dstPortList.end());
                 ui->dstPortListWidget->addItems(dstPortList);
             }
-            else if(ui->filteringComboBox->currentIndex() == 2)
+            else if(ui->filteringComboBox->currentIndex() == 6)
             {
 
                 for (const QString &port : mapTcpIpSrcPortComboDstCombo[selectedsrcIP+"\t"+selecteddstIp+"\t"+item->text()])
                 {
                     dstPortList.push_back(port);
                 }
+                std::sort(dstPortList.begin(),dstPortList.end());
                 ui->dstPortListWidget->addItems(dstPortList);
             }
         }
@@ -612,27 +918,27 @@ void MainWindow::on_playUDPorTCPComboBox_currentIndexChanged(int index)
     {
         if( !(ui->DstIPLineEdit->text().isEmpty()) && !(ui->dstPortlineEdit->text().isEmpty()))
         {
-            ui->connectTCPPushButton->setEnabled(true);
+            ui->connectUDPTCPPushButton->setEnabled(true);
 
         }
         else
         {
             QMessageBox::information(this, "Warning", "Set Destination IP address and ports.");
-            ui->connectTCPPushButton->setEnabled(false);
+            ui->connectUDPTCPPushButton->setEnabled(false);
             ui->playUDPorTCPComboBox->setCurrentIndex(-1);
         }
-        // ui->connectTCPPushButton->setEnabled(false);
+        // ui->connectUDPTCPPushButton->setEnabled(false);
     }
     else if(index == 0)
     {
         if(!(ui->dstPortlineEdit->text().isEmpty()))
         {
-            ui->connectTCPPushButton->setEnabled(true);
+            ui->connectUDPTCPPushButton->setEnabled(true);
         }
         else
         {
             QMessageBox::information(this, "Warning", "SetDestination port.");
-            ui->connectTCPPushButton->setEnabled(false);
+            ui->connectUDPTCPPushButton->setEnabled(false);
             ui->playUDPorTCPComboBox->setCurrentIndex(-1);
         }
     }
@@ -640,21 +946,21 @@ void MainWindow::on_playUDPorTCPComboBox_currentIndexChanged(int index)
     {
         if(!(ui->srcPortLineEdit->text().isEmpty()))
         {
-            ui->connectTCPPushButton->setEnabled(true);
+            ui->connectUDPTCPPushButton->setEnabled(true);
         }
         else
         {
             QMessageBox::information(this, "Warning", "Set src port.");
-            ui->connectTCPPushButton->setEnabled(false);
+            ui->connectUDPTCPPushButton->setEnabled(false);
             ui->playUDPorTCPComboBox->setCurrentIndex(-1);
         }
     }
 
 }
 
-void MainWindow::on_connectTCPPushButton_clicked()
+void MainWindow::on_connectUDPTCPPushButton_clicked()
 {
-    ui->connectTCPPushButton->setEnabled(false);
+    ui->connectUDPTCPPushButton->setEnabled(false);
     if(ui->playUDPorTCPComboBox->currentIndex() == 1)
     {
         if(ui->userIPComboBox->currentIndex()>=0)
@@ -697,7 +1003,7 @@ void MainWindow::on_connectTCPPushButton_clicked()
             dstPort.clear();
         }
 
-        bool connected = packetplayer->connectTcp(srcIpAddress,dstIpAddress,srcPort,dstPort);
+        emit setCreateTcp(srcIpAddress,dstIpAddress,srcPort,dstPort);
     }
     else if(ui->playUDPorTCPComboBox->currentIndex() == 0)
     {
@@ -741,40 +1047,8 @@ void MainWindow::on_connectTCPPushButton_clicked()
         {
             dstPort.clear();
         }
-        bool connected = packetplayer->connectUdp(srcIpAddress,dstIpAddress,srcPort,dstPort);
+        emit setCreateUDP(srcIpAddress,dstIpAddress,srcPort,dstPort);
         qDebug()<<"in udp";
-        if(connected == true)
-        {
-            qDebug()<<"udp connected";
-            bool packetfileempty = false;
-            if(ui->udporTcpComboBox->currentText() == "UDP")
-            {
-                packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
-
-            }
-            else if(ui->udporTcpComboBox->currentText() == "TCP")
-            {
-                packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
-
-            }
-            if(packetfileempty == true)
-            {
-                ui->playerHorizontalSlider->setEnabled(true);
-                ui->playerProgressBar->setEnabled(true);
-                ui->playPushButton->setEnabled(true);
-                ui->pausePushButton->setEnabled(true);
-                ui->timerSpeedSpinBox->setEnabled(true);
-            }
-            else
-            {
-                qDebug()<<"file is empty";
-                ui->playerHorizontalSlider->setEnabled(false);
-                ui->playerProgressBar->setEnabled(false);
-                ui->playPushButton->setEnabled(false);
-                ui->pausePushButton->setEnabled(false);
-                ui->timerSpeedSpinBox->setEnabled(false);
-            }
-        }
 
     }
     else if(ui->playUDPorTCPComboBox->currentIndex() == 2)
@@ -819,35 +1093,179 @@ void MainWindow::on_connectTCPPushButton_clicked()
             dstPort.clear();
         }
 
-        bool connected = packetplayer->startTcpServer(srcIpAddress,dstIpAddress,srcPort,dstPort);
+        emit setCreateTcpServer(srcIpAddress,dstIpAddress,srcPort,dstPort);
     }
-    ui->connectTCPPushButton->setEnabled(true);
+    ui->connectUDPTCPPushButton->setEnabled(true);
+}
+
+void MainWindow::creatingUdpStatus(bool status)
+{
+    if(status == true)
+    {
+        if(ui->udporTcpComboBox->currentIndex() == -1)
+        {
+            QMessageBox::information(this, "Success", "Please select UDP or TCP.");
+        }
+        else
+        {
+            QSet<QString> selectedSrcIpSet;
+            QSet<QString> selectedDstIpSet;
+            QSet<QString> selectedSrcPortSet;
+            QSet<QString> selectedDstPortSet;
+            if(ui->filteringComboBox->currentIndex() == 2 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcIP = ui->srcIpListWidget->selectedItems();
+                for(const QListWidgetItem *srcIp : std::as_const(tempSrcIP))
+                {
+                    selectedSrcIpSet.insert(srcIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 3 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstIP = ui->dstIpListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstIP))
+                {
+                    selectedDstIpSet.insert(dstIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 0 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcPort = ui->srcPortListWidget->selectedItems();
+                for(const QListWidgetItem *srcPort : std::as_const(tempSrcPort))
+                {
+                    selectedSrcPortSet.insert(srcPort->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 1 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstPort = ui->dstPortListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstPort))
+                {
+                    selectedDstPortSet.insert(dstIp->text());
+                }
+            }
+            qDebug()<<"udp connected";
+            // bool packetfileempty = false;
+            if(ui->udporTcpComboBox->currentText() == "UDP")
+            {
+                emit createparseFilterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
+            else if(ui->udporTcpComboBox->currentText() == "TCP")
+            {
+                emit createparseFilterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
+        }
+    }
+}
+
+void MainWindow::creatingTcpStatus(bool status)
+{
+    if(status == true)
+    {
+        // QMessageBox::information(this, "Success", "TCP Socket Created.");
+    }
+    else
+    {
+        // QMessageBox::information(this, "Fail", "Tcp Socket Not Created.");
+    }
+}
+
+void MainWindow::creatingTcpServerStatus(bool status)
+{
+    if(status == true)
+    {
+        // QMessageBox::information(this, "Success", "TCP Server Creation Failed.");
+    }
+    else
+    {
+        // QMessageBox::information(this, "Fail", "Tcp Server Creation Failed.");
+    }
+}
+
+void MainWindow::parseFilterPcapFileStatus(bool status)
+{
+    if(status == true)
+    {
+        ui->playerHorizontalSlider->setEnabled(true);
+        ui->playerProgressBar->setEnabled(true);
+        ui->playPushButton->setEnabled(true);
+        ui->pausePushButton->setEnabled(true);
+        ui->timerSpeedSpinBox->setEnabled(true);
+    }
+    else
+    {
+        QMessageBox::information(this, "INFO", "NO Filtered Packets found.");
+        ui->playerHorizontalSlider->setEnabled(false);
+        ui->playerProgressBar->setEnabled(false);
+        ui->playPushButton->setEnabled(false);
+        ui->pausePushButton->setEnabled(false);
+        ui->timerSpeedSpinBox->setEnabled(false);
+    }
 }
 
 void MainWindow::tcpConnectionStatus(bool tcpStatus)
 {
-    if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
+    if(ui->udporTcpComboBox->currentIndex() == -1)
     {
-        bool packetfileempty = false;
-        if(ui->udporTcpComboBox->currentText() == "UDP")
+        QMessageBox::information(this, "INFO", "Please select UDP or TCP.");
+    }
+    else
+    {
+        if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
         {
-            packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+            bool packetfileempty = false;
+
+            QSet<QString> selectedSrcIpSet;
+            QSet<QString> selectedDstIpSet;
+            QSet<QString> selectedSrcPortSet;
+            QSet<QString> selectedDstPortSet;
+            if(ui->filteringComboBox->currentIndex() == 2 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcIP = ui->srcIpListWidget->selectedItems();
+                for(const QListWidgetItem *srcIp : std::as_const(tempSrcIP))
+                {
+                    selectedSrcIpSet.insert(srcIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 3 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstIP = ui->dstIpListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstIP))
+                {
+                    selectedDstIpSet.insert(dstIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 0 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcPort = ui->srcPortListWidget->selectedItems();
+                for(const QListWidgetItem *srcPort : std::as_const(tempSrcPort))
+                {
+                    selectedSrcPortSet.insert(srcPort->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 1 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstPort = ui->dstPortListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstPort))
+                {
+                    selectedDstPortSet.insert(dstIp->text());
+                }
+            }
+            if(ui->udporTcpComboBox->currentText() == "UDP")
+            {
+                emit createparseFilterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
+            else if(ui->udporTcpComboBox->currentText() == "TCP")
+            {
+                emit createparseFilterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
 
         }
-        else if(ui->udporTcpComboBox->currentText() == "TCP")
-        {
-            packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
-
-        }
-        if(packetfileempty == true)
-        {
-            ui->playerHorizontalSlider->setEnabled(true);
-            ui->playerProgressBar->setEnabled(true);
-            ui->playPushButton->setEnabled(true);
-            ui->pausePushButton->setEnabled(true);
-            ui->timerSpeedSpinBox->setEnabled(true);
-        }
-        else
+        else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
         {
             ui->playerHorizontalSlider->setEnabled(false);
             ui->playerProgressBar->setEnabled(false);
@@ -855,41 +1273,71 @@ void MainWindow::tcpConnectionStatus(bool tcpStatus)
             ui->pausePushButton->setEnabled(false);
             ui->timerSpeedSpinBox->setEnabled(false);
         }
-    }
-    else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP CLIENT")
-    {
-        ui->playerHorizontalSlider->setEnabled(false);
-        ui->playerProgressBar->setEnabled(false);
-        ui->playPushButton->setEnabled(false);
-        ui->pausePushButton->setEnabled(false);
-        ui->timerSpeedSpinBox->setEnabled(false);
     }
 }
 
 void MainWindow::tcpServerConnectionStatus(bool tcpStatus)
 {
-    if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
+    if(ui->udporTcpComboBox->currentIndex() == -1)
     {
-        bool packetfileempty = false;
-        if(ui->udporTcpComboBox->currentText() == "UDP")
+        QMessageBox::information(this, "Success", "Please select UDP or TCP.");
+    }
+    else
+    {
+        if(tcpStatus == true && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
         {
-            packetfileempty = packetplayer->filterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
+            bool packetfileempty = false;
+
+
+            QSet<QString> selectedSrcIpSet;
+            QSet<QString> selectedDstIpSet;
+            QSet<QString> selectedSrcPortSet;
+            QSet<QString> selectedDstPortSet;
+            if(ui->filteringComboBox->currentIndex() == 2 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcIP = ui->srcIpListWidget->selectedItems();
+                for(const QListWidgetItem *srcIp : std::as_const(tempSrcIP))
+                {
+                    selectedSrcIpSet.insert(srcIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 3 || ui->filteringComboBox->currentIndex() == 5 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstIP = ui->dstIpListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstIP))
+                {
+                    selectedDstIpSet.insert(dstIp->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 0 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempSrcPort = ui->srcPortListWidget->selectedItems();
+                for(const QListWidgetItem *srcPort : std::as_const(tempSrcPort))
+                {
+                    selectedSrcPortSet.insert(srcPort->text());
+                }
+            }
+            if(ui->filteringComboBox->currentIndex() == 1 || ui->filteringComboBox->currentIndex() == 4 || ui->filteringComboBox->currentIndex() == 6)
+            {
+                QList<QListWidgetItem*> tempDstPort = ui->dstPortListWidget->selectedItems();
+                for(const QListWidgetItem *dstIp : std::as_const(tempDstPort))
+                {
+                    selectedDstPortSet.insert(dstIp->text());
+                }
+            }
+            if(ui->udporTcpComboBox->currentText() == "UDP")
+            {
+                emit createparseFilterPcapFile(0,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
+            else if(ui->udporTcpComboBox->currentText() == "TCP")
+            {
+                emit createparseFilterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedSrcIpSet,selectedDstIpSet,selectedSrcPortSet,selectedDstPortSet);
+
+            }
 
         }
-        else if(ui->udporTcpComboBox->currentText() == "TCP")
-        {
-            packetfileempty = packetplayer->filterPcapFile(1,ui->playUDPorTCPComboBox->currentIndex(),pcapFilePath,selectedsrcIP,selecteddstIp,selectedsrcPort,selecteddstPort);
-
-        }
-        if(packetfileempty == true)
-        {
-            ui->playerHorizontalSlider->setEnabled(true);
-            ui->playerProgressBar->setEnabled(true);
-            ui->playPushButton->setEnabled(true);
-            ui->pausePushButton->setEnabled(true);
-            ui->timerSpeedSpinBox->setEnabled(true);
-        }
-        else
+        else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
         {
             ui->playerHorizontalSlider->setEnabled(false);
             ui->playerProgressBar->setEnabled(false);
@@ -897,14 +1345,6 @@ void MainWindow::tcpServerConnectionStatus(bool tcpStatus)
             ui->pausePushButton->setEnabled(false);
             ui->timerSpeedSpinBox->setEnabled(false);
         }
-    }
-    else if(tcpStatus == false && ui->playUDPorTCPComboBox->currentText() == "TCP SERVER")
-    {
-        ui->playerHorizontalSlider->setEnabled(false);
-        ui->playerProgressBar->setEnabled(false);
-        ui->playPushButton->setEnabled(false);
-        ui->pausePushButton->setEnabled(false);
-        ui->timerSpeedSpinBox->setEnabled(false);
     }
 }
 
@@ -918,7 +1358,7 @@ void MainWindow::on_playPushButton_clicked(bool checked)
         ui->pausePushButton->setText("Pause");
         ui->pausePushButton->setChecked(false);
         qDebug()<<"start";
-        packetplayer->startorstopthePackets(checked);
+        emit setStartorstopthePackets(checked);
     }
     else
     {
@@ -927,7 +1367,7 @@ void MainWindow::on_playPushButton_clicked(bool checked)
         ui->playPushButton->setChecked(false);
         ui->pausePushButton->setText("Pause");
         ui->pausePushButton->setChecked(false);
-        packetplayer->startorstopthePackets(checked);
+        emit setStartorstopthePackets(checked);
     }
 }
 
@@ -940,13 +1380,13 @@ void MainWindow::on_pausePushButton_clicked(bool checked)
         {
             ui->pausePushButton->setText("Resume");
             ui->pausePushButton->setChecked(true);
-            packetplayer->pausethePackets(checked);
+            emit setPausethePackets(checked);
         }
         else
         {
             ui->pausePushButton->setText("Pause");
             ui->pausePushButton->setChecked(false);
-            packetplayer->pausethePackets(checked);
+            emit setPausethePackets(checked);
         }
     }
 }
@@ -955,27 +1395,28 @@ void MainWindow::on_pausePushButton_clicked(bool checked)
 void MainWindow::on_timerSpeedSpinBox_valueChanged(int arg1)
 {
     qDebug()<<ui->timerSpeedSpinBox->value();
-    packetplayer->timerspeed(arg1);
+    emit setTimerSpeed(arg1);
 }
 
 
 void MainWindow::on_timerSpeedSpinBox_textChanged(const QString &arg1)
 {
     qDebug()<<ui->timerSpeedSpinBox->value();
-    packetplayer->timerspeed(arg1.toInt());
+
+    emit setTimerSpeed(arg1.toInt());
 }
 
 
 void MainWindow::on_playerHorizontalSlider_sliderMoved(int position)
 {
     qDebug()<<"position";
-    packetplayer->setCurrIndexwithSlider(position);
+    emit setUICurrIndexwithSlider(position);
 }
 
 
 void MainWindow::on_playerHorizontalSlider_sliderPressed()
 {
     qDebug()<<"position";
-    packetplayer->setCurrIndexwithSlider(ui->playerHorizontalSlider->value());
-}
 
+    emit setUICurrIndexwithSlider(ui->playerHorizontalSlider->value());
+}
