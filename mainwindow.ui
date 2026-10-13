@@ -35,7 +35,7 @@
        <x>10</x>
        <y>10</y>
        <width>461</width>
-       <height>26</height>
+       <height>31</height>
       </rect>
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout">
@@ -73,7 +73,7 @@
        <x>10</x>
        <y>10</y>
        <width>371</width>
-       <height>52</height>
+       <height>61</height>
       </rect>
      </property>
      <layout class="QGridLayout" name="gridLayout">
@@ -234,7 +234,7 @@
        <x>10</x>
        <y>370</y>
        <width>781</width>
-       <height>56</height>
+       <height>61</height>
       </rect>
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout_6">
@@ -338,7 +338,7 @@
        <x>10</x>
        <y>290</y>
        <width>781</width>
-       <height>24</height>
+       <height>28</height>
       </rect>
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout_5">
@@ -383,8 +383,8 @@
       <rect>
        <x>10</x>
        <y>340</y>
-       <width>281</width>
-       <height>26</height>
+       <width>296</width>
+       <height>31</height>
       </rect>
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout_8">
@@ -396,7 +396,7 @@
        </widget>
       </item>
       <item>
-       <widget class="QPushButton" name="connectTCPPushButton">
+       <widget class="QPushButton" name="connectUDPTCPPushButton">
         <property name="text">
          <string>Connect</string>
         </property>
@@ -412,7 +412,7 @@
      <x>0</x>
      <y>0</y>
      <width>841</width>
-     <height>22</height>
+     <height>26</height>
     </rect>
    </property>
   </widget>

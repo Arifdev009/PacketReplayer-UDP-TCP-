@@ -17,6 +17,7 @@ public:
     void broadcastData(const QByteArray &data);
     void sendToClient(QTcpSocket *client, const QByteArray &data);
     bool isListening() const;
+    int noofClientsinServer();
 
 signals:
     void clientConnected(QTcpSocket *client);

@@ -1,9 +1,256 @@
 #include "pcapfileFilter.h"
+#include "PcapFileDevice.h"
+#include "IPv4Layer.h"
+#include "IPv6Layer.h"
 #include "TcpLayer.h"
 #include "UdpLayer.h"
-#include <qdebug.h>
+#include "TcpReassembly.h"
+#include "RawPacket.h"
+#include "Packet.h"
 
 #include <QtEndian>
+#include <QDebug>
+#include <map>
+#include <memory>
+
+#include<IPReassembly.h>
+#include<winsock2.h>
+
+// ============================================================================
+// INTERNAL PRIVATE STRUCTURES & CONFIGURATIONS FOR TCP REASSEMBLY
+// ============================================================================
+struct TcpStreamContext {
+    QByteArray streamBuffer;
+    bool meetsFilterCriteria = false;
+};
+
+struct StreamSlicingState {
+    enum FrameType { UNKNOWN, BINARY_BE32, BINARY_LE32, BINARY_BE16, BINARY_LE16, TEXT_LINE };
+    FrameType detectedType = UNKNOWN;
+    int bytesNeeded = 0;
+};
+
+struct ReassemblyFilters {
+    QSet<QString> srcIP;
+    QSet<QString> dstIP;
+    QSet<QString> srcPort;
+    QSet<QString> dstPort;
+    std::map<uint32_t, TcpStreamContext> connectionManager;
+};
+
+// Global/Static tracking variables for callback identification
+static std::map<uint32_t, StreamSlicingState> globalStreamTracker;
+static uint32_t currentActiveFlowKey = 0;
+
+// ============================================================================
+// PCAPPLUSPLUS TCP REASSEMBLY ENGINE CALLBACKS
+// ============================================================================
+void tcpReassemblyMsgReadyCallback(int side, const pcpp::TcpStreamData& streamData, void* userCookie)
+{
+    auto* filtersObj = static_cast<ReassemblyFilters*>(userCookie);
+    uint32_t flowKey = streamData.getConnectionData().flowKey;
+
+    if (filtersObj->connectionManager.find(flowKey) == filtersObj->connectionManager.end()) {
+        return;
+    }
+
+    TcpStreamContext& ctx = filtersObj->connectionManager[flowKey];
+    if (!ctx.meetsFilterCriteria) {
+        return;
+    }
+
+    if (streamData.getDataLength() > 0) {
+        ctx.streamBuffer.append(reinterpret_cast<const char*>(streamData.getData()), static_cast<int>(streamData.getDataLength()));
+    }
+}
+
+void tcpReassemblyConnectionStartCallback(const pcpp::ConnectionData& connectionData, void* userCookie)
+{
+    auto* filtersObj = static_cast<ReassemblyFilters*>(userCookie);
+
+    QString currentSrcIP = QString::fromStdString(connectionData.srcIP.toString());
+    QString currentDstIP = QString::fromStdString(connectionData.dstIP.toString());
+    QString currentSrcPort = QString::number(connectionData.srcPort);
+    QString currentDstPort = QString::number(connectionData.dstPort);
+
+    bool match = true;
+    if (!filtersObj->srcIP.isEmpty() && !filtersObj->srcIP.contains(currentSrcIP)) match = false;
+    if (!filtersObj->dstIP.isEmpty() && !filtersObj->dstIP.contains(currentDstIP)) match = false;
+    if (!filtersObj->srcPort.isEmpty() && !filtersObj->srcPort.contains(currentSrcPort)) match = false;
+    if (!filtersObj->dstPort.isEmpty() && !filtersObj->dstPort.contains(currentDstPort)) match = false;
+
+    TcpStreamContext newContext;
+    newContext.meetsFilterCriteria = match;
+    filtersObj->connectionManager[connectionData.flowKey] = newContext;
+}
+
+void tcpReassemblyConnectionEndCallback(const pcpp::ConnectionData& connectionData, pcpp::TcpReassembly::ConnectionEndReason reason, void* userCookie)
+{
+    auto* filtersObj = static_cast<ReassemblyFilters*>(userCookie);
+    filtersObj->connectionManager.erase(connectionData.flowKey);
+    globalStreamTracker.erase(connectionData.flowKey);
+}
+
+// ============================================================================
+// CLASS IMPLEMENTATIONS
+// ============================================================================
+// pcapFileFilter::pcapFileFilter(QObject *parent) : QObject(parent)
+// {
+// }
+
+QVector<QByteArray> pcapFileFilter::makeFilteredRawPackets(bool udportcp, QString filePath, QSet<QString> srcIP, QSet<QString> dstIP, QSet<QString> srcPort, QSet<QString> dstPort)
+{
+    QVector<QByteArray> payloadStorage;
+
+    if (udportcp == false) // 0 = UDP
+    {
+        parseUdpRawPackets(payloadStorage, filePath, srcIP, dstIP, srcPort, dstPort);
+    }
+    else if (udportcp == true) // 1 = TCP
+    {
+        // UNIVERSAL ROBUST USER-UPLOADED PCAP AUTO-DETECTION ENGINE
+        MessageLengthDecoder universalPredictor = [](const QByteArray& buffer) -> int {
+            if (buffer.isEmpty()) return 0;
+
+            StreamSlicingState& state = globalStreamTracker[currentActiveFlowKey];
+            const int MAX_SANE_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB Threshold limit
+
+            if (state.detectedType != StreamSlicingState::UNKNOWN && state.bytesNeeded > 0) {
+                if (buffer.size() < state.bytesNeeded) return 0;
+                int totalFrameLen = state.bytesNeeded;
+                state.detectedType = StreamSlicingState::UNKNOWN;
+                state.bytesNeeded = 0;
+                return totalFrameLen;
+            }
+
+            if (buffer.at(0) == '\x00') {
+                return 1; // Safely consume 1 null byte at a time to keep scanning for headers
+            }
+
+
+            char firstByte = buffer.at(0);
+            if ((firstByte >= 'A' && firstByte <= 'Z') || (firstByte >= 'a' && firstByte <= 'z') || firstByte == '{' || firstByte == '[') {
+                int newlinePos = buffer.indexOf('\n');
+                if (newlinePos != -1) return newlinePos + 1;
+                if (buffer.size() > 8192) return buffer.size();
+                return 0;
+            }
+
+            if (buffer.size() < 4) return 0;
+
+            quint32 len32BE = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(buffer.constData()));
+            quint32 len32LE = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(buffer.constData()));
+            quint16 len16BE = qFromBigEndian<quint16>(reinterpret_cast<const uchar*>(buffer.constData()));
+            quint16 len16LE = qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(buffer.constData()));
+
+            if (len32BE > 0 && (4 + (int)len32BE) <= MAX_SANE_MESSAGE_SIZE) {
+                state.detectedType = StreamSlicingState::BINARY_BE32;
+                state.bytesNeeded = 4 + len32BE;
+                if (buffer.size() >= state.bytesNeeded) {
+                    state.detectedType = StreamSlicingState::UNKNOWN;
+                    state.bytesNeeded = 0;
+                    return 4 + len32BE;
+                }
+                return 0;
+            }
+
+            if (len32LE > 0 && (4 + (int)len32LE) <= MAX_SANE_MESSAGE_SIZE) {
+                state.detectedType = StreamSlicingState::BINARY_LE32;
+                state.bytesNeeded = 4 + len32LE;
+                if (buffer.size() >= state.bytesNeeded) {
+                    state.detectedType = StreamSlicingState::UNKNOWN;
+                    state.bytesNeeded = 0;
+                    return 4 + len32LE;
+                }
+                return 0;
+            }
+
+            if (len16BE > 0 && (2 + (int)len16BE) < 65535) return 2 + len16BE;
+            if (len16LE > 0 && (2 + (int)len16LE) < 65535) return 2 + len16LE;
+
+            return buffer.size(); // Fallback for raw, unhandled binary streams
+        };
+
+        parseTcpRawPackets(payloadStorage, filePath, srcIP, dstIP, srcPort, dstPort, universalPredictor);
+    }
+
+    for(int i=0;i<payloadStorage.size();i++)
+    {
+        qDebug()<<"packet size:"<<payloadStorage[0].size();
+    }
+    return payloadStorage;
+}
+
+void pcapFileFilter::parseTcpRawPackets(QVector<QByteArray>& payloadStorage,
+                                        QString filePath,
+                                        QSet<QString> srcIP,
+                                        QSet<QString> dstIP,
+                                        QSet<QString> srcPort,
+                                        QSet<QString> dstPort,
+                                        MessageLengthDecoder lengthDecoder)
+{
+    std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::tryCreateReader(filePath.toStdString()));
+    if (reader == nullptr || !reader->open()) {
+        qDebug() << "Error: Cannot open PCAP file at path:" << filePath;
+        return;
+    }
+
+    // Flush volatile system trackers to keep processing instances clean between execution intervals
+    globalStreamTracker.clear();
+    currentActiveFlowKey = 0;
+
+    ReassemblyFilters dynamicFilters;
+    dynamicFilters.srcIP = srcIP;
+    dynamicFilters.dstIP = dstIP;
+    dynamicFilters.srcPort = srcPort;
+    dynamicFilters.dstPort = dstPort;
+
+    pcpp::TcpReassembly tcpReassembly(tcpReassemblyMsgReadyCallback, &dynamicFilters,
+                                      tcpReassemblyConnectionStartCallback, tcpReassemblyConnectionEndCallback);
+
+    pcpp::RawPacket rawPacket;
+
+    while (reader->getNextPacket(rawPacket))
+    {
+        pcpp::Packet parsedPacket(&rawPacket);
+        if (parsedPacket.isPacketOfType(pcpp::TCP))
+        {
+            // Extract properties to assign flow context
+            pcpp::TcpLayer* tcpLayer = parsedPacket.getLayerOfType<pcpp::TcpLayer>();
+            if (tcpLayer) {
+                // Calculate dynamic tracking flow key matching internal PcapPlusPlus properties
+                // This lets us assign contextual stream variables inside the loop window natively
+                pcpp::IPv4Layer* ip4 = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+                pcpp::IPv6Layer* ip6 = parsedPacket.getLayerOfType<pcpp::IPv6Layer>();
+
+                // Let the engine process the packet first to register/update connections
+                tcpReassembly.reassemblePacket(&rawPacket);
+
+                // Run slicing operations iteratively over active monitored buffers
+                for (auto& [flowKey, context] : dynamicFilters.connectionManager)
+                {
+                    if (!context.meetsFilterCriteria) continue;
+
+                    // Set global context identifier for our current decoder access
+                    currentActiveFlowKey = flowKey;
+
+                    while (!context.streamBuffer.isEmpty())
+                    {
+                        int messageLength = lengthDecoder(context.streamBuffer);
+                        if (messageLength <= 0 || context.streamBuffer.size() < messageLength) {
+                            break;
+                        }
+                        QByteArray fullApplicationMessage = context.streamBuffer.left(messageLength);
+                        payloadStorage.append(fullApplicationMessage);
+                        context.streamBuffer.remove(0, messageLength);
+                    }
+                }
+            }
+        }
+    }
+    tcpReassembly.closeAllConnections();
+    reader->close();
+}
 
 
 pcapFileFilter::pcapFileFilter(QObject *parent): QObject(parent)
@@ -11,606 +258,457 @@ pcapFileFilter::pcapFileFilter(QObject *parent): QObject(parent)
 
 }
 
-QVector<QByteArray> pcapFileFilter::makeFilteredRawPackets(bool udportcp,QString filePath,QString srcIP,QString dstIP,QString srcPort,QString dstPort)
+// QVector<QByteArray> pcapFileFilter::makeFilteredRawPackets(bool udportcp,QString filePath,QSet<QString> srcIP,QSet<QString> dstIP,QSet<QString> srcPort,QSet<QString> dstPort)
+// {
+//     // QVector<QByteArray> packetStorage;
+//     QVector<QByteArray> payloadStorage;
+
+
+
+
+
+//     if(udportcp == 0)
+//     {
+//         parseUdpRawPackets(payloadStorage,filePath,srcIP,dstIP,srcPort,dstPort);
+//     }
+//     else if(udportcp == 1)
+//     {
+
+
+//         // Call function
+//         QVector<QByteArray> messages;
+//         //  CORRECT
+//         parseTcpRawPackets(payloadStorage, filePath, srcIP, dstIP, srcPort, dstPort, myDecoder);
+
+
+//         // parseTcpRawPackets(payloadStorage,filePath,srcIP,dstIP,srcPort,dstPort);
+//     }
+
+//     for (const auto& payload : std::as_const(payloadStorage))
+//     {
+//         qDebug()<<"payload size : "<<payload.size();
+//     }
+
+
+//     return payloadStorage;
+//     // std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::tryCreateReader(filePath.toStdString()));
+//     // if (reader == nullptr)
+//     // {
+//     //     qDebug() << "Error: Cannot open PCAP file." ;
+//     //     return payloadStorage;
+//     //     // return 1;
+//     // }
+
+//     // if (!reader->open())
+//     // {
+//     //     qDebug() << "Error: Cannot open file at path:" << filePath;
+//     //     return payloadStorage;
+//     // }
+
+
+//     // // 1. Notice the 'udp' keyword at the start of the string
+//     // QString bpfExpression;
+//     // if(udportcp == 0)
+//     // {
+//     //     bpfExpression = "udp or (ip[6:2] & 0x3fff != 0)";
+//     // }
+//     // else if(udportcp == 1)
+//     // {
+//     //     bpfExpression = "tcp ";
+//     // }
+
+//     // if(!bpfExpression.isEmpty())
+//     // {
+//     //     if(!srcIP.isEmpty())
+//     //     {
+//     //         bpfExpression = bpfExpression +" and src host "+srcIP;
+//     //     }
+//     // }
+//     // else
+//     // {
+//     //     if(!srcIP.isEmpty())
+//     //     {
+//     //         bpfExpression = "src host "+srcIP;
+//     //     }
+//     // }
+
+//     // if(!bpfExpression.isEmpty())
+//     // {
+//     //     if(!srcPort.isEmpty())
+//     //     {
+//     //         bpfExpression = bpfExpression +" and src port "+srcPort;
+//     //     }
+//     // }
+//     // else
+//     // {
+//     //     if(!srcPort.isEmpty())
+//     //     {
+//     //         bpfExpression = "src port "+srcPort;
+//     //     }
+//     // }
+
+//     // if(!bpfExpression.isEmpty())
+//     // {
+//     //     if(!dstIP.isEmpty())
+//     //     {
+//     //         bpfExpression = bpfExpression +" and dst host "+dstIP;
+//     //     }
+//     // }
+//     // else
+//     // {
+//     //     if(!dstIP.isEmpty())
+//     //     {
+//     //         bpfExpression = "dst host "+dstIP;
+//     //     }
+//     // }
+
+//     // if(!bpfExpression.isEmpty())
+//     // {
+//     //     if(!dstPort.isEmpty())
+//     //     {
+//     //         bpfExpression = bpfExpression +" and dst port "+dstPort;
+//     //     }
+//     // }
+//     // else
+//     // {
+//     //     if(!dstPort.isEmpty())
+//     //     {
+//     //         bpfExpression = "dst port "+dstPort;
+//     //     }
+//     // }
+
+
+//     // Change this line:
+//     // pcpp::BPFStringFilter filter(bpfExpression.toStdString());
+
+//     // if (!reader->setFilter(filter)) {
+//     //     std::cerr << "Error: Invalid BpfFilter expression." << std::endl;
+//     //     // return; // Fix: use 'return;' instead of 'return 1;' for void function
+//     // }
+
+
+//     // // qDebug() << "Filtering UDP packets matching: " << bpfExpression;
+
+//     // pcpp::RawPacket rawPacket;
+//     // int matchCount = 0;
+
+//     // QVector<QByteArray> tempFragmentedPayload;
+//     // while (reader->getNextPacket(rawPacket)) {
+//     //     matchCount++;
+
+//     //     // 1. Get the pointer to the raw data and its length
+//     //     const uint8_t* rawDataPtr = rawPacket.getRawData();
+//     //     int rawDataLen = rawPacket.getRawDataLen();
+
+//     //     if (rawDataPtr != nullptr && rawDataLen > 0)
+//     //     {
+//     //         // 2. Convert the raw bytes into a QByteArray and push it to the QVector
+//     //         // The QByteArray constructor deeply copies the memory buffer
+
+
+//     //         FragmentOutput result;
+
+//     //         if(udportcp == 0)
+//     //         {
+//     //             result = parseUdpRawPacketFragment(rawPacket);
+//     //         }
+//     //         else if(udportcp ==1)
+//     //         {
+//     //             result = parseTcpRawPacketFragment(rawPacket);
+//     //         }
+
+
+//     //         if (result.isFragmented)
+//     //         {
+//     //             // qDebug()<<"Fragmented";
+//     //             // std::cout << "Fragment Number: #" << result.fragmentNumber << "\n";
+
+//     //             if(result.type == FIRST)
+//     //             {
+//     //                 tempFragmentedPayload.clear();
+//     //                 tempFragmentedPayload.push_back(result.payload);
+//     //                 // std::cout << "Type: FIRST\n";
+//     //             }
+//     //             else if(result.type == MIDDLE)
+//     //             {
+//     //                 if(tempFragmentedPayload.size()<result.fragmentNumber){tempFragmentedPayload.resize(result.fragmentNumber);}
+//     //                 tempFragmentedPayload[result.fragmentNumber-1] = result.payload;
+//     //                 // std::cout << "Type: MIDDLE\n";
+//     //             }
+//     //             else if(result.type == LAST)
+//     //             {
+
+//     //                 int totalSize = 0;
+//     //                 QByteArray combined;
+//     //                 tempFragmentedPayload.push_back(result.payload);
+
+//     //                 for (const QByteArray &ba : std::as_const(tempFragmentedPayload))
+//     //                 {
+//     //                     totalSize += ba.size();
+//     //                 }
+//     //                 combined.reserve(totalSize);
+
+//     //                 // Append each QByteArray into the single result
+//     //                 for (const QByteArray &ba : std::as_const(tempFragmentedPayload))
+//     //                 {
+//     //                     combined.append(ba);
+//     //                 }
+//     //                 payloadStorage.append(combined);
+//     //                 tempFragmentedPayload.clear();
+//     //                 // std::cout << "Type: LAST\n";
+//     //                 std::cout << "Payload Size: " << combined.size() << " bytes\n";
+
+//     //             }
+//     //         }
+//     //         else
+//     //         {
+//     //             tempFragmentedPayload.clear();
+//     //             // std::cout << "Payload Size: " << result.payload.size() << " bytes\n";
+//     //             payloadStorage.append(result.payload);
+//     //         }
+
+//     //         // packetStorage.append(QByteArray(reinterpret_cast<const char*>(rawDataPtr), rawDataLen));
+//     //     }
+
+//     // timespec ts = rawPacket.getPacketTimeStamp();
+//     // qDebug() << "[" << matchCount << "] Matched UDP packet at: "
+//     //          << ts.tv_sec << "." << ts.tv_nsec << " ("
+//     //          << rawDataLen << " bytes stored)" ;
+//     // }
+
+//     // qDebug() << "\nTotal matched UDP packets: " << matchCount;
+
+//     // reader->close();
+//     // return payloadStorage;
+
+// }
+
+
+
+
+
+
+
+void pcapFileFilter::parseUdpRawPackets(QVector<QByteArray>& payloadStorage,QString filePath,QSet<QString> srcIP,QSet<QString> dstIP,QSet<QString> srcPort,QSet<QString> dstPort)
 {
-    // QVector<QByteArray> packetStorage;
-    QVector<QByteArray> payloadStorage;
-
-    std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::getReader(filePath.toStdString()));
-    if (reader == nullptr)
+    // 1. Open the PCAP file
+    std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::tryCreateReader(filePath.toStdString()));
+    if (reader == nullptr || !reader->open())
     {
-        qDebug() << "Error: Cannot open PCAP file." ;
-        return payloadStorage;
-        // return 1;
+        qDebug() << "Error: Cannot open PCAP file at path:" << filePath;
+        return;
     }
 
-    if (!reader->open())
-    {
-        qDebug() << "Error: Cannot open file at path:" << filePath;
-        return payloadStorage;
-    }
-
-
-    // 1. Notice the 'udp' keyword at the start of the string
-    QString bpfExpression;
-    if(udportcp == 0)
-    {
-        bpfExpression = "udp ";
-    }
-    else if(udportcp == 1)
-    {
-        bpfExpression = "tcp ";
-    }
-
-    if(!bpfExpression.isEmpty())
-    {
-        if(!srcIP.isEmpty())
-        {
-            bpfExpression = bpfExpression +" and src host "+srcIP;
-        }
-    }
-    else
-    {
-        if(!srcIP.isEmpty())
-        {
-            bpfExpression = "src host "+srcIP;
-        }
-    }
-
-    if(!bpfExpression.isEmpty())
-    {
-        if(!srcPort.isEmpty())
-        {
-            bpfExpression = bpfExpression +" and src port "+srcPort;
-        }
-    }
-    else
-    {
-        if(!srcPort.isEmpty())
-        {
-            bpfExpression = "src port "+srcPort;
-        }
-    }
-
-    if(!bpfExpression.isEmpty())
-    {
-        if(!dstIP.isEmpty())
-        {
-            bpfExpression = bpfExpression +" and dst host "+dstIP;
-        }
-    }
-    else
-    {
-        if(!dstIP.isEmpty())
-        {
-            bpfExpression = "dst host "+dstIP;
-        }
-    }
-
-    if(!bpfExpression.isEmpty())
-    {
-        if(!dstPort.isEmpty())
-        {
-            bpfExpression = bpfExpression +" and dst port "+dstPort;
-        }
-    }
-    else
-    {
-        if(!dstPort.isEmpty())
-        {
-            bpfExpression = "dst port "+dstPort;
-        }
-    }
-
-
-    // Change this line:
-    pcpp::BPFStringFilter filter(bpfExpression.toStdString());
-
-    if (!reader->setFilter(filter)) {
-        std::cerr << "Error: Invalid BpfFilter expression." << std::endl;
-        // return; // Fix: use 'return;' instead of 'return 1;' for void function
-    }
-
-
-    // qDebug() << "Filtering UDP packets matching: " << bpfExpression;
-
+    // 2. Initialize the IP Reassembly Engine using its default clean constructor
+    // (This avoids structural type mismatch collisions with lambda-to-function pointer conversions)
+    pcpp::IPReassembly ipReassembly;
     pcpp::RawPacket rawPacket;
-    int matchCount = 0;
 
-    QVector<QByteArray> tempFragmentedPayload;
-    while (reader->getNextPacket(rawPacket)) {
-        matchCount++;
-
-        // 1. Get the pointer to the raw data and its length
-        const uint8_t* rawDataPtr = rawPacket.getRawData();
-        int rawDataLen = rawPacket.getRawDataLen();
-
-        if (rawDataPtr != nullptr && rawDataLen > 0)
-        {
-            // 2. Convert the raw bytes into a QByteArray and push it to the QVector
-            // The QByteArray constructor deeply copies the memory buffer
-
-
-            FragmentOutput result;
-
-            if(udportcp == 0)
-            {
-                result = parseUdpRawPacketFragment(rawPacket);
-            }
-            else if(udportcp ==1)
-            {
-                result = parseTcpRawPacketFragment(rawPacket);
-            }
-
-
-            if (result.isFragmented)
-            {
-                // qDebug()<<"Fragmented";
-                // std::cout << "Fragment Number: #" << result.fragmentNumber << "\n";
-
-                if(result.type == FIRST)
-                {
-                    tempFragmentedPayload.clear();
-                    tempFragmentedPayload.push_back(result.payload);
-                    // std::cout << "Type: FIRST\n";
-                }
-                else if(result.type == MIDDLE)
-                {
-                    if(tempFragmentedPayload.size()<result.fragmentNumber){tempFragmentedPayload.resize(result.fragmentNumber);}
-                    tempFragmentedPayload[result.fragmentNumber-1] = result.payload;
-                    // std::cout << "Type: MIDDLE\n";
-                }
-                else if(result.type == LAST)
-                {
-
-                    int totalSize = 0;
-                    QByteArray combined;
-                    tempFragmentedPayload.push_back(result.payload);
-
-                    for (const QByteArray &ba : std::as_const(tempFragmentedPayload))
-                    {
-                        totalSize += ba.size();
-                    }
-                    combined.reserve(totalSize);
-
-                    // Append each QByteArray into the single result
-                    for (const QByteArray &ba : std::as_const(tempFragmentedPayload))
-                    {
-                        combined.append(ba);
-                    }
-                    payloadStorage.append(combined);
-                    tempFragmentedPayload.clear();
-                    // std::cout << "Type: LAST\n";
-                    std::cout << "Payload Size: " << combined.size() << " bytes\n";
-
-                }
-            }
-            else
-            {
-                tempFragmentedPayload.clear();
-                // std::cout << "Payload Size: " << result.payload.size() << " bytes\n";
-                payloadStorage.append(result.payload);
-            }
-
-            // packetStorage.append(QByteArray(reinterpret_cast<const char*>(rawDataPtr), rawDataLen));
+    // Lambda helper to process a fully unfragmented or successfully reassembled packet
+    auto processPacket = [&](pcpp::Packet& packet)
+    {
+        if (!packet.isPacketOfType(pcpp::UDP) ||
+            !(packet.isPacketOfType(pcpp::IPv4) || packet.isPacketOfType(pcpp::IPv6))) {
+            return;
         }
 
-        // timespec ts = rawPacket.getPacketTimeStamp();
-        // qDebug() << "[" << matchCount << "] Matched UDP packet at: "
-        //          << ts.tv_sec << "." << ts.tv_nsec << " ("
-        //          << rawDataLen << " bytes stored)" ;
-    }
+        pcpp::UdpLayer* udpLayer = packet.getLayerOfType<pcpp::UdpLayer>();
+        if (!udpLayer) return;
 
-    // qDebug() << "\nTotal matched UDP packets: " << matchCount;
+        QString currentSrcIP;
+        QString currentDstIP;
+
+        if (packet.isPacketOfType(pcpp::IPv4)) {
+            pcpp::IPv4Layer* ip4Layer = packet.getLayerOfType<pcpp::IPv4Layer>();
+            if (ip4Layer) {
+                currentSrcIP = QString::fromStdString(ip4Layer->getSrcIPv4Address().toString());
+                currentDstIP = QString::fromStdString(ip4Layer->getDstIPv4Address().toString());
+            }
+        } else if (packet.isPacketOfType(pcpp::IPv6)) {
+            pcpp::IPv6Layer* ip6Layer = packet.getLayerOfType<pcpp::IPv6Layer>();
+            if (ip6Layer) {
+                currentSrcIP = QString::fromStdString(ip6Layer->getSrcIPv6Address().toString());
+                currentDstIP = QString::fromStdString(ip6Layer->getDstIPv6Address().toString());
+            }
+        }
+
+        QString currentSrcPort = QString::number(ntohs(udpLayer->getUdpHeader()->portSrc));
+        QString currentDstPort = QString::number(ntohs(udpLayer->getUdpHeader()->portDst));
+
+        if (!srcIP.isEmpty() && !srcIP.contains(currentSrcIP)) return;
+        if (!dstIP.isEmpty() && !dstIP.contains(currentDstIP)) return;
+        if (!srcPort.isEmpty() && !srcPort.contains(currentSrcPort)) return;
+        if (!dstPort.isEmpty() && !dstPort.contains(currentDstPort)) return;
+
+        uint8_t* payloadData = udpLayer->getLayerPayload();
+        size_t payloadLen = udpLayer->getLayerPayloadSize();
+
+        if (payloadData && payloadLen > 0) {
+            payloadStorage.append(QByteArray(reinterpret_cast<const char*>(payloadData), static_cast<int>(payloadLen)));
+        }
+    };
+
+    // 3. Loop through all packets in the file
+    while (reader->getNextPacket(rawPacket))
+    {
+        pcpp::Packet parsedPacket(&rawPacket);
+        pcpp::IPReassembly::ReassemblyStatus status;
+
+        pcpp::Packet* reassembledPacket = ipReassembly.processPacket(&parsedPacket, status);
+
+        if (status == pcpp::IPReassembly::REASSEMBLED && reassembledPacket != nullptr)
+        {
+            processPacket(*reassembledPacket);
+            delete reassembledPacket; // Memory management requirement
+        }
+        else if (status == pcpp::IPReassembly::NON_FRAGMENT)
+        {
+            processPacket(parsedPacket);
+        }
+    }
 
     reader->close();
-    return payloadStorage;
-
 }
 
 
 
-FragmentOutput pcapFileFilter::parseTcpRawPacketFragment(const pcpp::RawPacket &rawPacket)
-{
-    // qDebug()<<"TCP";
-    FragmentOutput output;
 
-    // Make a local, non-const copy of the raw packet to allow PcapPlusPlus layer parsing
-    pcpp::RawPacket packetCopy(rawPacket);
-    pcpp::Packet parsedPacket(&packetCopy);
+// // #include <QDebug>
+// // #include <memory>
+// // #include <QHash>
+// // #include "Packet.h"
+// // #include "PcapFileDevice.h"
+// // #include "TcpReassembly.h"
 
-    // 1. Verify what layers are visible initially
-    pcpp::TcpLayer* tcpLayer = parsedPacket.getLayerOfType<pcpp::TcpLayer>();
-    pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+// // 1. Context Structure to manage filtering and streaming buffers
+// struct TcpSmartAssemblyContext {
+//     QVector<QByteArray>* finalStorage; // Target output container
+//     QHash<uint32_t, QByteArray> streamBuffers; // Tracks active running assembly chunks per flowKey
 
-    // If it's not IPv4, or if it's an unfragmented packet that isn't TCP, drop it safely
-    if (!ipLayer || (!ipLayer->isFragment() && !tcpLayer))
-    {
-        output.isFragmented = false;
-        output.type = NOT_FRAGMENTED;
-        output.fragmentNumber = 0;
-        return output;
-    }
+//     const QSet<QString>* srcIP;
+//     const QSet<QString>* dstIP;
+//     const QSet<QString>* srcPort;
+//     const QSet<QString>* dstPort;
+// };
 
-    // --- CASE 1: Packet is NOT fragmented (Standard Single TCP Packet) ---
-    if (!ipLayer->isFragment())
-    {
-        output.isFragmented = false;
-        output.type = NOT_FRAGMENTED;
-        output.fragmentNumber = 0;
-
-        // Fetch the raw IP payload pointer and size
-        uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
-        size_t ipPayloadSize = ipLayer->getLayerPayloadSize();
-
-        if (ipPayloadPtr && ipPayloadSize >= 20) // Minimum TCP header size is 20 bytes
-        {
-            // Safely cast the pointer to the PcapPlusPlus TCP header structure
-            pcpp::tcphdr* tcpHeader = reinterpret_cast<pcpp::tcphdr*>(ipPayloadPtr);
-
-            // Calculate sizes based on the TCP Data Offset (words to bytes multiplier)
-            size_t tcpHeaderSize = tcpHeader->dataOffset * 4;
-
-            if (ipPayloadSize >= tcpHeaderSize)
-            {
-                size_t actualDataSize = ipPayloadSize - tcpHeaderSize;
-                uint8_t* tcpDataPtr = ipPayloadPtr + tcpHeaderSize;
-
-                if (actualDataSize > 0) {
-                    output.payload = QByteArray(reinterpret_cast<const char*>(tcpDataPtr), static_cast<int>(actualDataSize));
-                }
-            }
-        }
-        return output;
-    }
-    else
-    {
-        // qDebug() << "Fragmented packet detected.";
-    }
-
-    // --- CASE 2: Packet IS fragmented ---
-    output.isFragmented = true;
-    uint16_t fragOffset = ipLayer->getFragmentOffset();
-
-    uint8_t* payloadPtr = ipLayer->getLayerPayload();
-    size_t payloadSize = ipLayer->getLayerPayloadSize();
-
-    // Map out the Fragment Type Enum and handle TCP header stripping
-    if (ipLayer->isFirstFragment())
-    {
-        output.type = FIRST;
-        output.fragmentNumber = 1;
-
-        // FIX: Manually strip the TCP header from the FIRST fragment's payload
-        // PcapPlusPlus layers often won't register tcpLayer on fragments, so we parse manually
-        if (payloadPtr && payloadSize >= 20)
-        {
-            pcpp::tcphdr* tcpHeader = reinterpret_cast<pcpp::tcphdr*>(payloadPtr);
-            size_t tcpHeaderSize = tcpHeader->dataOffset * 4; // Convert words to bytes
-
-            if (payloadSize >= tcpHeaderSize)
-            {
-                size_t actualDataSize = payloadSize - tcpHeaderSize;
-                uint8_t* tcpDataPtr = payloadPtr + tcpHeaderSize;
-
-                if (actualDataSize > 0) {
-                    output.payload = QByteArray(reinterpret_cast<const char*>(tcpDataPtr), static_cast<int>(actualDataSize));
-                }
-            }
-        }
-    }
-    else // MIDDLE or LAST fragments
-    {
-        if (ipLayer->isLastFragment())
-        {
-            output.type = LAST;
-        }
-        else
-        {
-            output.type = MIDDLE;
-        }
-
-        // Calculate sequence order dynamically based on standard 8-byte boundary chunks
-        output.fragmentNumber = (fragOffset / 185) + 1;
-
-        // MIDDLE and LAST fragments contain ONLY raw data (no TCP headers exist here)
-        if (payloadPtr && payloadSize > 0)
-        {
-            output.payload = QByteArray(reinterpret_cast<const char*>(payloadPtr), static_cast<int>(payloadSize));
-        }
-    }
-
-    return output;
-}
-
-
-
-FragmentOutput pcapFileFilter::parseUdpRawPacketFragment(const pcpp::RawPacket &rawPacket)
-{
-    FragmentOutput output;
-
-    // Make a local, non-const copy of the raw packet to allow PcapPlusPlus layer parsing
-    pcpp::RawPacket packetCopy(rawPacket);
-    pcpp::Packet parsedPacket(&packetCopy);
-
-    // 1. Verify what layers are visible initially
-    pcpp::UdpLayer* udpLayer = parsedPacket.getLayerOfType<pcpp::UdpLayer>();
-    pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
-
-    // If it's not IPv4, or if it's an unfragmented packet that isn't UDP, drop it safely
-    if (!ipLayer || (!ipLayer->isFragment() && !udpLayer))
-    {
-        output.isFragmented = false;
-        output.type = NOT_FRAGMENTED;
-        output.fragmentNumber = 0;
-        return output;
-    }
-
-    // --- CASE 1: Packet is NOT fragmented (Standard Single UDP Packet) ---
-    if (!ipLayer->isFragment())
-    {
-        output.isFragmented = false;
-        output.type = NOT_FRAGMENTED;
-        output.fragmentNumber = 0;
-
-        // Fetch the raw IP payload pointer and size
-        uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
-        size_t ipPayloadSize = ipLayer->getLayerPayloadSize();
-
-        // A standard UDP header is always exactly 8 bytes
-        const size_t udpHeaderSize = 8;
-
-        if (ipPayloadPtr && ipPayloadSize > udpHeaderSize)
-        {
-            size_t actualDataSize = ipPayloadSize - udpHeaderSize;
-            uint8_t* udpDataPtr = ipPayloadPtr + udpHeaderSize;
-
-            if (actualDataSize > 0) {
-                output.payload = QByteArray(reinterpret_cast<const char*>(udpDataPtr), static_cast<int>(actualDataSize));
-            }
-        }
-        return output;
-    }
-    else
-    {
-        // qDebug() << "Fragmented UDP packet detected.";
-    }
-
-    // --- CASE 2: Packet IS fragmented ---
-    output.isFragmented = true;
-    uint16_t fragOffset = ipLayer->getFragmentOffset();
-
-    uint8_t* payloadPtr = ipLayer->getLayerPayload();
-    size_t payloadSize = ipLayer->getLayerPayloadSize();
-
-    // Map out the Fragment Type Enum and handle UDP header stripping
-    if (ipLayer->isFirstFragment())
-    {
-        output.type = FIRST;
-        output.fragmentNumber = 1;
-
-        // Strip the 8-byte UDP header from the FIRST fragment's payload
-        const size_t udpHeaderSize = 8;
-
-        if (payloadPtr && payloadSize > udpHeaderSize)
-        {
-            size_t actualDataSize = payloadSize - udpHeaderSize;
-            uint8_t* udpDataPtr = payloadPtr + udpHeaderSize;
-
-            if (actualDataSize > 0) {
-                output.payload = QByteArray(reinterpret_cast<const char*>(udpDataPtr), static_cast<int>(actualDataSize));
-            }
-        }
-    }
-    else // MIDDLE or LAST fragments
-    {
-        if (ipLayer->isLastFragment())
-        {
-            output.type = LAST;
-        }
-        else
-        {
-            output.type = MIDDLE;
-        }
-
-        // Calculate sequence order dynamically based on standard 8-byte boundary chunks
-        output.fragmentNumber = (fragOffset / 185) + 1;
-
-        // MIDDLE and LAST fragments contain ONLY raw data (no UDP headers exist here)
-        if (payloadPtr && payloadSize > 0)
-        {
-            output.payload = QByteArray(reinterpret_cast<const char*>(payloadPtr), static_cast<int>(payloadSize));
-        }
-    }
-
-    return output;
-}
-
-// FragmentOutput pcapFileFilter::parseRawPacketFragment(const pcpp::RawPacket &rawPacket)
+// // 2. The TCP Stream Callback
+// static void onTcpMessageReady(int8_t side, const pcpp::TcpStreamData& streamData, void* userCookie)
 // {
-//     FragmentOutput output;
+//     if (!userCookie) return;
 
-//     // Make a local, non-const copy of the raw packet to allow PcapPlusPlus layer parsing
-//     pcpp::RawPacket packetCopy(rawPacket);
-//     pcpp::Packet parsedPacket(&packetCopy);
+//     auto* context = static_cast<TcpSmartAssemblyContext*>(userCookie);
+//     const pcpp::ConnectionData& connData = streamData.getConnectionData();
 
-//     // 1. Verify this packet actually contains TCP data
-//     pcpp::TcpLayer* tcpLayer = parsedPacket.getLayerOfType<pcpp::TcpLayer>();
-//     pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
+//     // Extract network details for filtering
+//     QString currentSrcIP   = QString::fromStdString(connData.srcIP.toString());
+//     QString currentDstIP   = QString::fromStdString(connData.dstIP.toString());
+//     QString currentSrcPort = QString::number(connData.srcPort);
+//     QString currentDstPort = QString::number(connData.dstPort);
 
-//     // pcpp::iphdr* ipHeader = ipLayer->getIPv4Header();
+//     // Apply user filters
+//     if (!context->srcIP->isEmpty() && !context->srcIP->contains(currentSrcIP)) return;
+//     if (!context->dstIP->isEmpty() && !context->dstIP->contains(currentDstIP)) return;
+//     if (!context->srcPort->isEmpty() && !context->srcPort->contains(currentSrcPort)) return;
+//     if (!context->dstPort->isEmpty() && !context->dstPort->contains(currentDstPort)) return;
 
-//     // Print raw memory flags directly (using Qt's macro instead of pcpp::netToHost16)
-//     // uint16_t rawOffsetAndFlags = qFromBigEndian(ipHeader->fragmentOffset);
-//     // std::cout << "--- DIAGNOSTIC CHECK ---" << std::endl;
-//     // std::cout << "Raw offset field in memory: 0x" << std::hex << rawOffsetAndFlags << std::dec << std::endl;
-//     // std::cout << "Extracted Offset Value: " << ipLayer->getFragmentOffset() << std::endl;
-//     // std::cout << "------------------------" << std::endl;
+//     const uint8_t* payloadData = streamData.getData();
+//     size_t payloadLen = streamData.getDataLength();
 
-
-
-//     // If it's not IPv4, or if it's an unfragmented packet that isn't TCP, drop it safely
-//     if (!ipLayer || (!ipLayer->isFragment() && !tcpLayer))
+//     if (payloadData && payloadLen > 0)
 //     {
-//         output.isFragmented = false;
-//         output.type = NOT_FRAGMENTED;
-//         output.fragmentNumber = 0;
-//         return output;
-//     }
+//         uint32_t streamKey = connData.flowKey;
 
-//     // --- CASE 1: Packet is NOT fragmented (Standard Single TCP Packet) ---
-//     if (!ipLayer->isFragment())
-//     {
-//         output.isFragmented = false;
-//         output.type = NOT_FRAGMENTED;
-//         output.fragmentNumber = 0;
+//         // 1. Accumulate this block into our running assembly stream buffer
+//         context->streamBuffers[streamKey].append(reinterpret_cast<const char*>(payloadData), static_cast<int>(payloadLen));
 
-//         // Fetch the raw IP payload pointer and size
-//         uint8_t* ipPayloadPtr = ipLayer->getLayerPayload();
-//         size_t ipPayloadSize = ipLayer->getLayerPayloadSize();
+//         // 2. SMART BOUNDARY CHECKING:
+//         // PcapPlusPlus sets streamData.getDataLength() to a size smaller than standard
+//         // MTU (or triggers flag states) when an application pushes an intentional flush boundary.
+//         // If a packet was smaller than 1460, or it represents a completed block transaction,
+//         // we can slice it here to avoid merging independent transactions together.
 
-//         if (ipPayloadPtr && ipPayloadSize >= 20) // Minimum TCP header size is 20 bytes
+//         // Check if this segment represents the end of an application data unit burst
+//         // (Typically marked when the arriving piece doesn't hit a maximum structural link limit,
+//         // meaning it's the termination of a transmission burst).
+//         if (payloadLen < 1460)
 //         {
-//             // FIX: Safely cast the pointer to the PcapPlusPlus TCP header structure
-//             pcpp::tcphdr* tcpHeader = reinterpret_cast<pcpp::tcphdr*>(ipPayloadPtr);
-
-//             // Calculate sizes based on the TCP Data Offset (words to bytes multiplier)
-//             size_t tcpHeaderSize = tcpHeader->dataOffset * 4;
-
-//             if (ipPayloadSize >= tcpHeaderSize)
+//             QByteArray completedMessage = context->streamBuffers.take(streamKey);
+//             if (!completedMessage.isEmpty())
 //             {
-//                 size_t actualDataSize = ipPayloadSize - tcpHeaderSize;
-//                 // qDebug() << "Total IP Payload Size (TCP Header + Data):" << ipPayloadSize;
-//                 // qDebug() << "Actual TCP Data/Payload Size:" << actualDataSize;
-
-//                 // Option A: If you want to store ONLY the actual application data (e.g., HTTP text, files)
-//                 uint8_t* tcpDataPtr = ipPayloadPtr + tcpHeaderSize;
-//                 if (actualDataSize > 0) {
-//                     output.payload = QByteArray(reinterpret_cast<const char*>(tcpDataPtr), static_cast<int>(actualDataSize));
-//                 }
-
-//                 // Option B: If you actually wanted the whole TCP layer (Header + Data), uncomment the line below:
-//                 // output.payload = QByteArray(reinterpret_cast<const char*>(ipPayloadPtr), static_cast<int>(ipPayloadSize));
+//                 // This captures your 2808 byte sequences (1460 + 1348) perfectly!
+//                 context->finalStorage->append(completedMessage);
 //             }
 //         }
-//         return output;
 //     }
-//     else
-//     {
-//         qDebug()<<"Fragmented";
-//     }
-
-//     // --- CASE 2: Packet IS fragmented ---
-//     output.isFragmented = true;
-//     uint16_t fragOffset = ipLayer->getFragmentOffset();
-
-//     // Map out the Fragment Type Enum
-//     if (ipLayer->isFirstFragment())
-//     {
-//         output.type = FIRST;
-//         output.fragmentNumber = 1;
-
-//         // Note: For the FIRST fragment, tcpLayer will be valid!
-//         // You could strip the TCP header here too if you only want raw app data.
-//     }
-//     else if (ipLayer->isLastFragment())
-//     {
-//         output.type = LAST;
-//         output.fragmentNumber = (fragOffset / 185) + 1;
-//     }
-//     else
-//     {
-//         output.type = MIDDLE;
-//         output.fragmentNumber = (fragOffset / 185) + 1;
-//     }
-
-//     // Extract the raw IP data payload bytes belonging specifically to this fragment
-//     // Remember: MIDDLE and LAST fragments do NOT have a TCP header; they are just raw fragmented data.
-//     uint8_t* payloadPtr = ipLayer->getLayerPayload();
-//     size_t payloadSize = ipLayer->getLayerPayloadSize();
-//     if (payloadPtr && payloadSize > 0)
-//     {
-//         output.payload = QByteArray(reinterpret_cast<const char*>(payloadPtr), static_cast<int>(payloadSize));
-//     }
-
-//     return output;
 // }
 
-// FragmentOutput pcapFileFilter::parseRawPacketFragment(const pcpp::RawPacket &rawPacket)
+// // 3. Connection End Callback
+// static void onTcpConnectionEnd(const pcpp::ConnectionData& connData, pcpp::TcpReassembly::ConnectionEndReason reason, void* userCookie)
 // {
-//     FragmentOutput output;
+//     if (!userCookie) return;
 
-//     // Make a local, non-const copy of the raw packet to allow PcapPlusPlus layer parsing
-//     pcpp::RawPacket packetCopy(rawPacket);
-//     pcpp::Packet parsedPacket(&packetCopy);
+//     auto* context = static_cast<TcpSmartAssemblyContext*>(userCookie);
+//     uint32_t streamKey = connData.flowKey;
 
-//     // Extract the IPv4 Layer
-//     pcpp::IPv4Layer* ipLayer = parsedPacket.getLayerOfType<pcpp::IPv4Layer>();
-//     if (!ipLayer)
+//     // If a connection closes via FIN/RST, flush out whatever is remaining in its buffer
+//     if (context->streamBuffers.contains(streamKey))
 //     {
-//         // Handle non-IPv4 cases safely
-//         output.isFragmented = false;
-//         output.type = NOT_FRAGMENTED;
-//         output.fragmentNumber = 0;
-//         return output;
-//     }
-
-//     // Check if the packet has its fragmentation bits or offset active
-//     if (!ipLayer->isFragment())
-//     {
-//         output.isFragmented = false;
-//         output.type = NOT_FRAGMENTED;
-//         output.fragmentNumber = 0; // Unfragmented data behaves as a single unit (Index 0)
-
-//         // Grab the unfragmented IP payload data anyway
-
-//         uint8_t* payloadPtr = ipLayer->getLayerPayload();
-//         size_t payloadSize = ipLayer->getLayerPayloadSize();
-//         // qDebug()<<"payloadsize is "<<payloadSize;
-//         if (payloadPtr && payloadSize > 0)
+//         QByteArray completedMessage = context->streamBuffers.take(streamKey);
+//         if (!completedMessage.isEmpty())
 //         {
-//             output.payload = QByteArray(reinterpret_cast<const char*>(payloadPtr), static_cast<int>(payloadSize));
+//             context->finalStorage->append(completedMessage);
 //         }
-//         return output;
 //     }
-//     else
-//     {
-//         qDebug()<<"Fragmented";
-//     }
-
-//     // --- Packet IS fragmented ---
-//     output.isFragmented = true;
-//     uint16_t fragOffset = ipLayer->getFragmentOffset();
-
-//     // Map out the Fragment Type Enum
-//     if (ipLayer->isFirstFragment())
-//     {
-//         output.type = FIRST;
-//         output.fragmentNumber = 1; // The first fragment is always #1
-//     }
-//     else if (ipLayer->isLastFragment())
-//     {
-//         output.type = LAST;
-//         // Calculate the fragment number based on its offset space
-//         // Standard maximum payload size per fragment is 1480 bytes (offset step of 185)
-//         output.fragmentNumber = (fragOffset / 185) + 1;
-//     }
-//     else
-//     {
-//         output.type = MIDDLE;
-//         // Calculate sequence order dynamically based on the 8-byte boundary units
-//         output.fragmentNumber = (fragOffset / 185) + 1;
-//     }
-
-//     // Extract the raw data payload bytes belonging specifically to this fragment
-//     uint8_t* payloadPtr = ipLayer->getLayerPayload();
-//     size_t payloadSize = ipLayer->getLayerPayloadSize();
-//     if (payloadPtr && payloadSize > 0)
-//     {
-//         output.payload = QByteArray(reinterpret_cast<const char*>(payloadPtr), static_cast<int>(payloadSize));
-//     }
-
-//     return output;
 // }
 
+// // 4. Main Entry Function
+// void pcapFileFilter::parseTcpRawPackets(QVector<QByteArray>& payloadStorage,
+//                                         QString filePath,
+//                                         QSet<QString> srcIP,
+//                                         QSet<QString> dstIP,
+//                                         QSet<QString> srcPort,
+//                                         QSet<QString> dstPort)
+// {
+//     std::unique_ptr<pcpp::IFileReaderDevice> reader(pcpp::IFileReaderDevice::tryCreateReader(filePath.toStdString()));
+//     if (reader == nullptr || !reader->open())
+//     {
+//         qDebug() << "Error: Cannot open PCAP file at path:" << filePath;
+//         return;
+//     }
+
+//     TcpSmartAssemblyContext contextObj;
+//     contextObj.finalStorage = &payloadStorage;
+//     contextObj.srcIP        = &srcIP;
+//     contextObj.dstIP        = &dstIP;
+//     contextObj.srcPort      = &srcPort;
+//     contextObj.dstPort      = &dstPort;
+
+//     pcpp::TcpReassembly tcpReassembly(onTcpMessageReady, &contextObj, nullptr, onTcpConnectionEnd);
+//     pcpp::RawPacket rawPacket;
+
+//     while (reader->getNextPacket(rawPacket))
+//     {
+//         pcpp::Packet parsedPacket(&rawPacket);
+//         tcpReassembly.reassemblePacket(parsedPacket);
+//     }
+
+//     // Force flush trailing internal bytes out to the callbacks
+//     tcpReassembly.closeAllConnections();
+
+//     // 5. EOF FINAL PURGE
+//     // Empty out any trailing buffers that didn't hit a termination length check before EOF
+//     if (!contextObj.streamBuffers.isEmpty())
+//     {
+//         for (auto it = contextObj.streamBuffers.begin(); it != contextObj.streamBuffers.end(); ++it)
+//         {
+//             if (!it.value().isEmpty())
+//             {
+//                 payloadStorage.append(it.value());
+//             }
+//         }
+//         contextObj.streamBuffers.clear();
+//     }
+
+//     reader->close();
+// }
 

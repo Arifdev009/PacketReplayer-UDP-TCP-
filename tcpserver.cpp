@@ -43,6 +43,11 @@ bool TcpServer::isListening() const {
     return m_server->isListening();
 }
 
+int TcpServer::noofClientsinServer()
+{
+    return m_clients.size();
+}
+
 void TcpServer::onNewConnection() {
     // Get the socket for the new connection
     QTcpSocket *clientSocket = m_server->nextPendingConnection();

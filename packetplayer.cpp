@@ -15,51 +15,93 @@ void packetPlayer::initializeClassMembers()
 
     connect(tcpclient,&TcpClient::connectionStatusChanged,this,[=](bool isActive)
             {
+                startorstopthePackets(false);
                 emit tcpConnectionStatus(isActive);
             });
     connect(tcpserver,&TcpServer::connectionStatusChanged,this,[=](bool isActive)
             {
+                startorstopthePackets(false);
                 emit tcpServerConnectionStatus(isActive);
             });
+    enPlayerStatus = IDLEPLAYER;
 }
 
-bool packetPlayer::connectTcp(QHostAddress dstIpAddress, QHostAddress srcIpAddress, QString srcPort, QString dstPort)
+void packetPlayer::connectTcp(QHostAddress srcIpAddress, QHostAddress dstIpAddress, QString srcPort, QString dstPort)
 {
-    delete tcpclient;
-    tcpclient = nullptr;
-    tcpclient = new TcpClient();
-    if(!srcIpAddress.isNull() && !srcPort.isEmpty())
+
+    if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
-        tcpclient->m_socket->bind(srcIpAddress,srcPort.toInt());
-    }
-    if(!dstIpAddress.isNull() && !dstPort.isEmpty())
-    {
-        tcpclient->connectToServer(dstIpAddress.toString(),dstPort.toInt());
+        emit tcpConnectionStatus(true);
+        // return true;
     }
     else
     {
-        return false;
+        socketSrcIP = srcIpAddress.toString();
+        socketDstIP = dstIpAddress.toString();
+        socketSrcPort = srcPort;
+        socketDstPort = dstPort;
+
+        tcpclient->disconnectFromServer();
+        delete tcpclient;
+        tcpclient = nullptr;
+        tcpclient = new TcpClient();
+
+        connect(tcpclient,&TcpClient::connectionStatusChanged,this,[=](bool isActive)
+                {
+                    emit tcpConnectionStatus(isActive);
+                });
+        if(!srcIpAddress.isNull() && !srcPort.isEmpty())
+        {
+            tcpclient->m_socket->bind(srcIpAddress,srcPort.toInt());
+        }
+        if(!dstIpAddress.isNull() && !dstPort.isEmpty())
+        {
+            tcpclient->connectToServer(dstIpAddress.toString(),dstPort.toInt());
+        }
+        else
+        {
+            emit creatingTcpStatus(false);
+            // return false;
+        }
+        emit creatingTcpStatus(true);
     }
-    return true;
 }
 
-bool packetPlayer::startTcpServer(QHostAddress dstIpAddress, QHostAddress srcIpAddress, QString srcPort, QString dstPort)
+void packetPlayer::startTcpServer(QHostAddress srcIpAddress, QHostAddress dstIpAddress, QString srcPort, QString dstPort)
 {
-    delete tcpserver;
-    tcpserver = nullptr;
-    tcpserver = new TcpServer();
-    if(!srcPort.isEmpty())
+    if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
-        tcpserver->startServer(srcPort.toUShort());
+        emit tcpServerConnectionStatus(true);
     }
     else
     {
-        return false;
+        socketSrcIP = srcIpAddress.toString();
+        socketDstIP = dstIpAddress.toString();
+        socketSrcPort = srcPort;
+        socketDstPort = dstPort;
+
+        tcpserver->stopServer();
+        delete tcpserver;
+        tcpserver = nullptr;
+        tcpserver = new TcpServer();
+
+        connect(tcpserver,&TcpServer::connectionStatusChanged,this,[=](bool isActive)
+                {
+                    emit tcpServerConnectionStatus(isActive);
+                });
+        if(!srcPort.isEmpty())
+        {
+            tcpserver->startServer(srcPort.toUShort());
+        }
+        else
+        {
+            emit creatingTcpServerStatus(false);
+        }
+        emit creatingTcpServerStatus(true);
     }
-    return true;
 }
 
-bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddress, QString srcPort, QString dstPort)
+void packetPlayer::connectUdp(QHostAddress srcIpAddress, QHostAddress dstIpAddress, QString srcPort, QString dstPort)
 {
     // delete udpsender;
     // udpsender = nullptr;
@@ -74,54 +116,74 @@ bool packetPlayer::connectUdp(QHostAddress dstIpAddress, QHostAddress srcIpAddre
     //     qDebug()<<"created the udpsender";
     // }
     // udpsender->m_udpSocket.;
-    if(!srcIpAddress.isNull() && !srcPort.isEmpty())
+    if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
-        udpsender->m_udpSocket->bind(srcIpAddress,srcPort.toInt());
-    }
-    if(!dstIpAddress.isNull() && !dstPort.isEmpty())
-    {
-        udpTargetAddress.clear();
-        udpTargetport.clear();
-        udpTargetAddress = dstIpAddress.toString();
-        udpTargetport = dstPort;
-        // pcapFileFilter pcapfilefilter;
-        // // packetStorage = pcapFileFilter::makeFilteredRawPackets();
-        qDebug()<<"return true";
-        return true;
-        // tcpclient->connectToServer(dstIpAddress.toString(),dstPort.toInt());
-    }
-    else if(!dstPort.isEmpty())
-    {
-        qDebug()<<"return true";
-        udpTargetAddress.clear();
-        udpTargetport.clear();
-        // udpTargetAddress = dstIpAddress.toString();
-        udpTargetport = dstPort;
-        if(udpsender->m_udpSocket->isOpen())
-        {
-            qDebug()<<"udp sender is open";
-        }
-        return true;
+        qDebug()<<"different file";
+        // return true;
     }
     else
     {
-        qDebug()<<"return false";
-        return false;
+        socketSrcIP = srcIpAddress.toString();
+        socketDstIP = dstIpAddress.toString();
+        socketSrcPort = srcPort;
+        socketDstPort = dstPort;
+
+        udpsender->disconnect();
+        delete udpsender;
+        udpsender = nullptr;
+        udpsender = new UdpSender();
+
+        if(!srcIpAddress.isNull() && !srcPort.isEmpty())
+        {
+            udpsender->m_udpSocket->bind(srcIpAddress,srcPort.toInt());
+        }
+        if(!dstIpAddress.isNull() && !dstPort.isEmpty())
+        {
+            udpTargetAddress.clear();
+            udpTargetport.clear();
+            udpTargetAddress = dstIpAddress.toString();
+            udpTargetport = dstPort;
+            // pcapFileFilter pcapfilefilter;
+            // // packetStorage = pcapFileFilter::makeFilteredRawPackets();
+            qDebug()<<"return true";
+            emit creatingUdpStatus(true);
+            // tcpclient->connectToServer(dstIpAddress.toString(),dstPort.toInt());
+        }
+        else if(!dstPort.isEmpty())
+        {
+            qDebug()<<"return true";
+            udpTargetAddress.clear();
+            udpTargetport.clear();
+            // udpTargetAddress = dstIpAddress.toString();
+            udpTargetport = dstPort;
+            if(udpsender->m_udpSocket->isOpen())
+            {
+                qDebug()<<"udp sender is open";
+            }
+            emit creatingUdpStatus(true);
+        }
+        else
+        {
+            qDebug()<<"return false";
+            emit creatingUdpStatus(false);
+        }
     }
+
 }
 
-bool packetPlayer::filterPcapFile(bool udportcp,unsigned int sendingudportcp,QString pcapFilePath, QString dstIpAddress, QString srcIpAddress, QString srcPort, QString dstPort)
+void packetPlayer::filterPcapFile(bool udportcp,unsigned int sendingudportcp,QString pcapFilePath, QSet<QString> srcIpAddress, QSet<QString> dstIpAddress, QSet<QString> srcPort, QSet<QString> dstPort)
 {
     if(!pcapFilePath.isEmpty())
     {
         packetStorage.clear();
 
         pcapFileFilter pcapfilefilter;
-        packetStorage = pcapfilefilter.makeFilteredRawPackets(udportcp,pcapFilePath,dstIpAddress,srcIpAddress,srcPort,dstPort);
+        packetStorage = pcapfilefilter.makeFilteredRawPackets(udportcp,pcapFilePath,srcIpAddress,dstIpAddress,srcPort,dstPort);
 
         if(packetStorage.isEmpty())
         {
-            return false;
+            emit parseFilterPcapFileStatus(false);
+            // return false;
         }
         else
         {
@@ -129,12 +191,12 @@ bool packetPlayer::filterPcapFile(bool udportcp,unsigned int sendingudportcp,QSt
             packetFinalIndex = packetStorage.size()-1;
             packetCurrentIndex = packetIniIndex;
             sendudportcp = sendingudportcp;
-            return true;
+            emit parseFilterPcapFileStatus(true);
         }
     }
     else
     {
-        return false;
+        emit parseFilterPcapFileStatus(true);
     }
 }
 
@@ -186,17 +248,16 @@ void packetPlayer::playthePackets()
 
 }
 
-
-
 void packetPlayer::pausethePackets(bool pauseorResume)
 {
     if(pauseorResume == true)
     {
+        enPlayerStatus = PAUSEPLAYER;
         QMetaObject::invokeMethod(sendTimer, "stop", Qt::QueuedConnection);
     }
     else
     {
-
+        enPlayerStatus = STARTPLAYER;
         QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
         // sendTimer->start(timerTimerout);
     }
@@ -206,6 +267,7 @@ void packetPlayer::startorstopthePackets(bool startorstop)
 {
     if(startorstop)
     {
+        enPlayerStatus = STARTPLAYER;
         percentparced =0;
         emit packetPercentageSent(percentparced);
         QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
@@ -214,7 +276,9 @@ void packetPlayer::startorstopthePackets(bool startorstop)
         // sendTimer->start(timerTimerout);
     }
     else
-    {/*
+    {
+        enPlayerStatus = STOPPLAYER;
+        /*
         percentparced =0;
         emit packetPercentageSent(percentparced);*/
         packetCurrentIndex = 0;
@@ -231,8 +295,10 @@ void packetPlayer::setCurrIndexwithSlider(unsigned int percent)
     QMetaObject::invokeMethod(sendTimer, "stop", Qt::QueuedConnection);
     percentparced = percent;
     packetCurrentIndex = ((percent/100.0)*packetFinalIndex);
-    QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
-
+    if(enPlayerStatus == STARTPLAYER)
+    {
+        QMetaObject::invokeMethod(sendTimer, "start", Qt::QueuedConnection, Q_ARG(int, timerTimerout));
+    }
 }
 
 void packetPlayer::timerspeed(unsigned int timerSpeed)
