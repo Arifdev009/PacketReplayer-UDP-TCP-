@@ -31,7 +31,10 @@ void packetPlayer::connectTcp(QHostAddress srcIpAddress, QHostAddress dstIpAddre
 
     if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
-        emit tcpConnectionStatus(true);
+        if(tcpclient->isConnected())
+        {
+            emit tcpConnectionStatus(true);
+        }
         // return true;
     }
     else
@@ -71,7 +74,10 @@ void packetPlayer::startTcpServer(QHostAddress srcIpAddress, QHostAddress dstIpA
 {
     if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
-        emit tcpServerConnectionStatus(true);
+        if(tcpserver->noofClientsinServer() > 0)
+        {
+            emit tcpServerConnectionStatus(true);
+        }
     }
     else
     {
@@ -92,12 +98,19 @@ void packetPlayer::startTcpServer(QHostAddress srcIpAddress, QHostAddress dstIpA
         if(!srcPort.isEmpty())
         {
             tcpserver->startServer(srcPort.toUShort());
+            if(tcpserver != nullptr)
+            {
+                emit creatingTcpServerStatus(true);
+            }
+            else
+            {
+                emit creatingTcpServerStatus(false);
+            }
         }
         else
         {
-            emit creatingTcpServerStatus(false);
+
         }
-        emit creatingTcpServerStatus(true);
     }
 }
 
@@ -119,6 +132,11 @@ void packetPlayer::connectUdp(QHostAddress srcIpAddress, QHostAddress dstIpAddre
     if(srcIpAddress.toString() == socketSrcIP && srcPort == socketSrcPort && dstIpAddress.toString() == socketDstIP && dstPort == socketDstPort )
     {
         qDebug()<<"different file";
+        if(udpsender->m_udpSocket != nullptr)
+        {
+            emit creatingUdpStatus(true);
+        }
+
         // return true;
     }
     else
