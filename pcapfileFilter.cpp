@@ -235,17 +235,17 @@ void pcapFileFilter::parseTcpRawPackets(QVector<QByteArray>& payloadStorage,QStr
         pcpp::Packet parsedPacket(&rawPacket);
         pcpp::IPReassembly::ReassemblyStatus status;
 
-        pcpp::Packet* reassembledPacket = ipReassembly.processPacket(&parsedPacket, status);
+        // pcpp::Packet* reassembledPacket = ipReassembly.processPacket(&parsedPacket, status);
 
-        if (status == pcpp::IPReassembly::REASSEMBLED && reassembledPacket != nullptr)
-        {
-            processPacket(*reassembledPacket);
-            delete reassembledPacket; // Memory management requirement
-        }
-        else if (status == pcpp::IPReassembly::NON_FRAGMENT)
-        {
-            processPacket(parsedPacket);
-        }
+        // if (status == pcpp::IPReassembly::REASSEMBLED && reassembledPacket != nullptr)
+        // {
+        // processPacket(*reassembledPacket);
+        // delete reassembledPacket; // Memory management requirement
+        // }
+        // else if (status == pcpp::IPReassembly::NON_FRAGMENT)
+        // {
+        processPacket(parsedPacket);
+        // }
     }
 
 
